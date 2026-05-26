@@ -1,4 +1,4 @@
-local genv = (typeof(getgenv) == "function" and getgenv()) or _G
+local genv = (type(getgenv) == "function" and getgenv()) or _G
 if genv.__ULTIMATE_BOT_LOADED then
     pcall(function()
         if genv.__ULTIMATE_BOT_CLEANUP then genv.__ULTIMATE_BOT_CLEANUP() end
@@ -121,13 +121,13 @@ local MarketplaceService = nil
 pcall(function() MarketplaceService = game:GetService("MarketplaceService") end)
 
 local ExecutorInfo = {
-    HasFireTouchInterest = typeof(firetouchinterest) == "function",
-    HasGetHiddenProperty = typeof(gethiddenproperty) == "function",
-    HasSetHiddenProperty = typeof(sethiddenproperty) == "function",
-    HasSetClipboard      = typeof(setclipboard) == "function",
-    HasGetGenv           = typeof(getgenv) == "function",
-    HasHttpRequest       = typeof(request) == "function" or typeof(http_request) == "function",
-    HasSetFpsCap         = typeof(setfpscap) == "function",
+    HasFireTouchInterest = type(firetouchinterest) == "function",
+    HasGetHiddenProperty = type(gethiddenproperty) == "function",
+    HasSetHiddenProperty = type(sethiddenproperty) == "function",
+    HasSetClipboard      = type(setclipboard) == "function",
+    HasGetGenv           = type(getgenv) == "function",
+    HasHttpRequest       = type(request) == "function" or type(http_request) == "function",
+    HasSetFpsCap         = type(setfpscap) == "function",
     ExecutorName         = "Unknown",
 }
 pcall(function()
