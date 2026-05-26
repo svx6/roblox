@@ -1,4 +1,18 @@
-local genv = (type(getgenv) == "function" and getgenv()) or _G
+local genv
+do
+    local _ok, _result = pcall(function()
+        if type(getgenv) == "function" then
+            return getgenv()
+        end
+        return nil
+    end)
+    if _ok and type(_result) == "table" then
+        genv = _result
+    else
+        genv = _G or {}
+    end
+end
+
 if genv.__ULTIMATE_BOT_LOADED then
     pcall(function()
         if genv.__ULTIMATE_BOT_CLEANUP then genv.__ULTIMATE_BOT_CLEANUP() end
@@ -6,11 +20,32 @@ if genv.__ULTIMATE_BOT_LOADED then
 end
 genv.__ULTIMATE_BOT_LOADED = true
 
-if not task then task = {} end
+local _unpack = unpack or table.unpack or function(t, i, j)
+    i = i or 1
+    j = j or #t
+    if i > j then return end
+    return t[i], _unpack(t, i + 1, j)
+end
+
+do
+    local _ok, _existingTask = pcall(function() return task end)
+    if not _ok or not _existingTask or type(_existingTask) ~= "table" then
+        pcall(function() task = {} end)
+        if type(task) ~= "table" then
+            pcall(function()
+                if rawset then rawset(_G, "task", {}) end
+            end)
+            pcall(function()
+                if rawget then task = rawget(_G, "task") end
+            end)
+        end
+    end
+end
+if type(task) ~= "table" then task = {} end
 if not task.spawn then
     task.spawn = function(fn, ...)
         local args = {...}
-        coroutine.wrap(function() fn(unpack(args)) end)()
+        coroutine.wrap(function() fn(_unpack(args)) end)()
     end
 end
 if not task.wait then
@@ -120,14 +155,35 @@ pcall(function() HttpService = game:GetService("HttpService") end)
 local MarketplaceService = nil
 pcall(function() MarketplaceService = game:GetService("MarketplaceService") end)
 
+local function _safeTypeCheck(name)
+    local ok, result = pcall(function()
+        local lookupTable = {
+            firetouchinterest = function() return firetouchinterest end,
+            gethiddenproperty = function() return gethiddenproperty end,
+            sethiddenproperty = function() return sethiddenproperty end,
+            setclipboard = function() return setclipboard end,
+            getgenv = function() return getgenv end,
+            request = function() return request end,
+            http_request = function() return http_request end,
+            setfpscap = function() return setfpscap end,
+        }
+        local getter = lookupTable[name]
+        if not getter then return false end
+        local ok2, val = pcall(getter)
+        if not ok2 then return false end
+        return type(val) == "function"
+    end)
+    return ok and result or false
+end
+
 local ExecutorInfo = {
-    HasFireTouchInterest = type(firetouchinterest) == "function",
-    HasGetHiddenProperty = type(gethiddenproperty) == "function",
-    HasSetHiddenProperty = type(sethiddenproperty) == "function",
-    HasSetClipboard      = type(setclipboard) == "function",
-    HasGetGenv           = type(getgenv) == "function",
-    HasHttpRequest       = type(request) == "function" or type(http_request) == "function",
-    HasSetFpsCap         = type(setfpscap) == "function",
+    HasFireTouchInterest = _safeTypeCheck("firetouchinterest"),
+    HasGetHiddenProperty = _safeTypeCheck("gethiddenproperty"),
+    HasSetHiddenProperty = _safeTypeCheck("sethiddenproperty"),
+    HasSetClipboard      = _safeTypeCheck("setclipboard"),
+    HasGetGenv           = _safeTypeCheck("getgenv"),
+    HasHttpRequest       = _safeTypeCheck("request") or _safeTypeCheck("http_request"),
+    HasSetFpsCap         = _safeTypeCheck("setfpscap"),
     ExecutorName         = "Unknown",
 }
 pcall(function()
@@ -2988,11 +3044,11 @@ end
 
 local TypoCorrections = {
     flig = "fling", flimg = "fling", filng = "fling", flng = "fling",
-    yeet = "yeet", yeet = "yeet", yeeet = "yeet", yet = "yeet",
+    yeeet = "yeet", yet = "yeet",
     kil = "kill", killl = "kill",
     tp2m = "tp2me", tp2mee = "tp2me",
     shoo = "shoot", sho = "shoot", schoot = "shoot",
-    murd = "murd", murdr = "murd", murder = "murd", murde = "murd",
+    murdr = "murd", murder = "murd", murde = "murd",
     folw = "follow", follw = "follow",
     orbt = "orbit",
     sezure = "seizure", seizur = "seizure",
