@@ -208,6 +208,7 @@ local CommandLog        = {}
 local PlatformPart      = nil
 local CageParts         = {}
 local TrailParts        = {}
+local BringPlayer
 local XRayParts         = {}
 local AuraParts         = {}
 local FreezeCages       = {}
@@ -1259,7 +1260,7 @@ local function PullPlayer(target)
         local botHRP = GetBotHRP()
         if not botHRP then return end
         local dest = botHRP.CFrame
-        BringPlayer(target, dest)
+        if BringPlayer then BringPlayer(target, dest) end
     end)
 end
 
@@ -1502,7 +1503,7 @@ local function FreezePlayerAdvanced(target)
         end)
     end
     task.spawn(function()
-        BringPlayer(target, CFrame.new(pos))
+        if BringPlayer then BringPlayer(target, CFrame.new(pos)) end
     end)
 end
 
@@ -1844,7 +1845,7 @@ local function UnviewPlayer()
     end
 end
 
-local function BringPlayer(target, customDest)
+BringPlayer = function(target, customDest)
     if not target then return end
     task.spawn(function()
         pcall(function()
@@ -3066,7 +3067,7 @@ end
 
 local function HandleBotCommand(message, executorPlayer, isWhisper)
     if not message or not executorPlayer then return end
-    if typeof(message) ~= "string" then return end
+    if type(message) ~= "string" then return end
     local matchedPrefix, cleanedMessage = FindPrefix(message)
     if not matchedPrefix then return end
     if not CanUseBot(executorPlayer) then return end
