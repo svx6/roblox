@@ -1,8 +1,3 @@
--- ULTIMATE BOT ENGINE v7.0 — Full rewrite, all bugs fixed, zero decorative headers
--- SuperOwner: roboxproplyer (Level 4, untouchable)
--- Dual prefix: ?bot and .bot — MM2 dead chat fixed — multi-layer god mode
--- Thread-safe fling — instant yeet — private help — fixed permissions
-
 local genv = (typeof(getgenv) == "function" and getgenv()) or _G
 if genv.__ULTIMATE_BOT_LOADED then
     pcall(function()
@@ -11,7 +6,6 @@ if genv.__ULTIMATE_BOT_LOADED then
 end
 genv.__ULTIMATE_BOT_LOADED = true
 
--- Polyfill task scheduler for executors that lack it
 if not task then task = {} end
 if not task.spawn then
     task.spawn = function(fn, ...)
@@ -45,32 +39,28 @@ if not string.split then
     end
 end
 
--- Core configuration — all tunable constants in one place
 local SuperOwner      = "roboxproplyer"
-local Prefixes        = {"?bot ", ".bot "}    -- dual prefix support
+local Prefixes        = {"?bot ", ".bot "}
 local FlingPower      = 9999999
-local LoopFlingDelay  = 1.5
+local LoopFlingDelay  = 0.8
 local FollowDistance  = 5
 local OrbitRadius     = 12
 local OrbitSpeed      = 3
-local CooldownTime    = 0.3
+local CooldownTime    = 0.15
 local FlySpeed        = 80
 local SpinSpeed       = 20
-local AnnoyDelay      = 0.15
-local BringIterations = 200                   -- increased for reliability with items
-local BringDelay      = 0                     -- zero delay for instant bring
+local AnnoyDelay      = 0.08
+local BringIterations = 250
+local BringDelay      = 0
 local ChatRateLimit   = 1.0
 local BotStartTime    = tick()
-
--- Private/public mode — private blocks unpermed users, permed users always work
 local BotMode = "private"
+local LastTarget = nil
 
--- Permissions database: 1=User 2=Admin 3=Owner 4=SuperOwner
 local PermittedUsers = {
     [SuperOwner:lower()] = 4
 }
 
--- Minimum permission level per command
 local CommandPermissions = {
     tp = 1, bring = 1, goto = 1, follow = 1, orbit = 1, attach = 1,
     fling = 1, loopfling = 1, loopkill = 1, annoy = 1, speed = 1,
@@ -95,19 +85,21 @@ local CommandPermissions = {
     copyname = 1, btools = 1, fogoff = 1, fullbright = 1,
     nightmode = 1, daymode = 1, tpcoords = 1, dance = 1, undance = 1,
     trail = 1, untrail = 1, rejoin = 1, serverhop = 1, char = 1,
-    -- New commands (level 1)
     perms = 1, tp2me = 1, safetp = 1, back = 1, clone = 1,
     unclone = 1, countdown = 1, aura = 1, unaura = 1, nuke = 1,
     emote = 1, track = 1, untrack = 1,
-    -- Level 2: Admin
+    report = 1, shoot = 1, unshoot = 1, murd = 1, unmurd = 1,
+    tpbehind = 1, pull = 1, rocket = 1, magnet = 1, unmagnet = 1,
+    tpall = 1, kill = 1, looptp = 1, unlooptp = 1, say = 1,
+    antislow = 1, unantislow = 1, antifling = 1, unantifling = 1,
+    antikill = 1, info = 1, serverage = 1, ragdoll = 1,
+    autorespawn = 1, unautorespawn = 1, wallbang = 1, unwallbang = 1,
+    crash = 1, flingmethod = 1,
     perm = 2, unperm = 2,
-    -- Level 3: Owner
     owner = 3, unowner = 3, admin = 3, unadmin = 3,
-    -- Level 4: SuperOwner only
     shutdown = 4, public = 4, private = 4,
 }
 
--- Services — cached references, pcall-wrapped for non-universal services
 local Players            = game:GetService("Players")
 local RunService         = game:GetService("RunService")
 local UserInputService   = game:GetService("UserInputService")
@@ -128,7 +120,6 @@ pcall(function() HttpService = game:GetService("HttpService") end)
 local MarketplaceService = nil
 pcall(function() MarketplaceService = game:GetService("MarketplaceService") end)
 
--- Executor capability flags — detected once at load for branching logic
 local ExecutorInfo = {
     HasFireTouchInterest = typeof(firetouchinterest) == "function",
     HasGetHiddenProperty = typeof(gethiddenproperty) == "function",
@@ -153,14 +144,20 @@ pcall(function()
     end
 end)
 
--- Engine state — all mutable runtime flags and object pools
+pcall(function()
+    if ExecutorInfo.HasSetFpsCap then
+        setfpscap(999)
+    end
+end)
+
 local ActiveConnections  = {}
 local AllConnectionNames = {
     "LoopFling", "LoopKill", "LoopFlingAll", "Follow", "Orbit", "Attach",
     "Annoy", "NoClip", "Fly", "God", "GodHealth", "AntiAFK", "AntiVoid",
     "InfJump", "Spin", "Stare", "ESP", "CoinFarm", "Farm", "BlackHole",
     "Strobe", "Creep", "Mimic", "Trail", "GodKnife", "Tornado", "Seizure",
-    "Dance", "FloorFly", "Aura", "Track",
+    "Dance", "FloorFly", "Aura", "Track", "Magnet", "AntiSlow", "AntiFling",
+    "LoopTP", "AutoShoot", "AutoMurd", "WallBang", "AutoRespawn",
 }
 for _, name in ipairs(AllConnectionNames) do
     ActiveConnections[name] = nil
@@ -187,23 +184,38 @@ local IsDancing         = false
 local IsFloorFlying     = false
 local IsAuraActive      = false
 local IsTracking        = false
-local IsFlingBusy       = false   -- mutex lock to prevent concurrent flings hitting bystanders
+local IsFlingBusy       = false
+local IsMagnetOn        = false
+local IsAntiSlow        = false
+local IsAntiFling       = false
+local IsLoopTP          = false
+local IsAutoShoot       = false
+local IsAutoMurd        = false
+local IsWallBang        = false
+local IsAutoRespawn     = false
+local PreferredFlingMethod = 0
 local FloorFlyTarget    = nil
 local FloorFlyPlatform  = nil
 local TrackTarget       = nil
 local TrackLastPos      = nil
-local SavedCFrame       = nil     -- for safetp/back
+local LoopTPTarget      = nil
+local AutoShootTarget   = nil
+local AutoMurdTarget    = nil
+local SavedCFrame       = nil
 local ESPObjects        = {}
 local CommandCooldowns  = {}
 local CommandLog        = {}
 local PlatformPart      = nil
 local CageParts         = {}
-local TrailParts         = {}
+local TrailParts        = {}
 local XRayParts         = {}
 local AuraParts         = {}
+local FreezeCages       = {}
 local OriginalGravity   = Workspace.Gravity
 local OriginalLighting  = {}
 local LastChatTime      = 0
+local GodHealthConnection = nil
+local GodDiedConnection = nil
 
 pcall(function()
     OriginalLighting.Ambient = Lighting.Ambient
@@ -214,7 +226,6 @@ pcall(function()
     OriginalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
 end)
 
--- Logging — minimal structured output for debugging
 local function Log(level, message)
     print(string.format("[%s] %s: %s", os.date("%H:%M:%S"), level, message))
 end
@@ -231,22 +242,35 @@ local function LogCommand(executorName, command, targetName)
     Log("CMD", string.format("%s > %s %s", executorName, command, targetName or ""))
 end
 
--- Homoglyph bypass engine — deterministic Unicode substitution with zero-width fragmentation
--- Maps common Latin characters to visually identical Cyrillic/Unicode confusables
--- Combined with invisible divider insertion every 2-3 characters for filter evasion
 local HomoglyphMap = {
-    a = {"\xD0\xB0"},             -- Cyrillic а (U+0430)
-    e = {"\xD0\xB5"},             -- Cyrillic е (U+0435)
-    o = {"\xD0\xBE"},             -- Cyrillic о (U+043E)
-    c = {"\xD1\x81"},             -- Cyrillic с (U+0441)
-    p = {"\xD1\x80"},             -- Cyrillic р (U+0440)
-    s = {"\xD1\x95"},             -- Cyrillic ѕ (U+0455)
-    i = {"\xD1\x96"},             -- Cyrillic і (U+0456)
-    x = {"\xD1\x85"},             -- Cyrillic х (U+0445)
-    y = {"\xD1\x83"},             -- Cyrillic у (U+0443)
+    a = {"\xD0\xB0", "\xC9\x91"},
+    e = {"\xD0\xB5", "\xC4\x99"},
+    o = {"\xD0\xBE", "\xC3\xB6"},
+    c = {"\xD1\x81", "\xC4\x87"},
+    p = {"\xD1\x80"},
+    s = {"\xD1\x95", "\xC5\x9B"},
+    i = {"\xD1\x96", "\xC3\xAD"},
+    x = {"\xD1\x85"},
+    y = {"\xD1\x83", "\xC3\xBD"},
+    n = {"\xD0\xBF"},
+    h = {"\xD2\xBB"},
+    d = {"\xD4\x81"},
+    g = {"\xC9\xA1"},
+    k = {"\xD2\x9B"},
+    l = {"\xD1\x96"},
+    m = {"\xD0\xBC"},
+    t = {"\xD1\x82"},
+    u = {"\xD1\x83"},
+    v = {"\xD1\x83"},
+    w = {"\xD1\xA1"},
+    r = {"\xD0\xB3"},
 }
-local ZeroWidthSpace = "\xE2\x80\x8B"    -- U+200B
-local ZeroWidthNJ    = "\xE2\x80\x8C"    -- U+200C
+local ZeroWidthSpace = "\xE2\x80\x8B"
+local ZeroWidthNJ    = "\xE2\x80\x8C"
+local ZeroWidthJ     = "\xE2\x80\x8D"
+local HairSpace      = "\xE2\x80\x8A"
+local ThinSpace      = "\xE2\x80\x89"
+local InvisChars = {ZeroWidthSpace, ZeroWidthNJ, ZeroWidthJ, HairSpace}
 
 local function BypassText(text)
     if not text or #text == 0 then return text end
@@ -255,7 +279,6 @@ local function BypassText(text)
     for i = 1, #text do
         local ch = text:sub(i, i)
         local lower = ch:lower()
-        -- Substitute ~40% of matchable characters with homoglyphs for natural appearance
         if HomoglyphMap[lower] and math.random(1, 5) <= 2 then
             local glyphs = HomoglyphMap[lower]
             result = result .. glyphs[math.random(1, #glyphs)]
@@ -263,16 +286,14 @@ local function BypassText(text)
             result = result .. ch
         end
         insertCounter = insertCounter + 1
-        -- Insert zero-width space every 2-3 characters to fragment filter tokens
-        if insertCounter >= math.random(2, 3) and i < #text and ch ~= " " then
-            result = result .. ZeroWidthSpace
+        if insertCounter >= math.random(2, 4) and i < #text and ch ~= " " then
+            result = result .. InvisChars[math.random(1, #InvisChars)]
             insertCounter = 0
         end
     end
     return result
 end
 
--- Chat output — rate-limited message dispatch supporting both TextChatService and legacy
 local function SendNotification(title, text, duration)
     pcall(function()
         StarterGui:SetCore("SendNotification", {
@@ -309,21 +330,18 @@ local function SendChatMessage(text)
     end)
 end
 
--- Whisper — tries existing RBXWhisper channel, falls back to /w command through general
 local function SendWhisperMessage(targetPlayer, text)
     if not targetPlayer then return end
     pcall(function()
         if TextChatService then
             local channels = TextChatService:FindFirstChild("TextChannels")
             if channels then
-                -- Search for existing whisper channel with this player
                 for _, channel in ipairs(channels:GetChildren()) do
                     if channel.Name:find("RBXWhisper") and channel.Name:find(tostring(targetPlayer.UserId)) then
                         channel:SendAsync(text)
                         return
                     end
                 end
-                -- Fallback: initiate whisper via /w command through general channel
                 local rbxGeneral = channels:FindFirstChild("RBXGeneral")
                 if rbxGeneral then
                     rbxGeneral:SendAsync("/w " .. targetPlayer.Name .. " " .. text)
@@ -331,7 +349,6 @@ local function SendWhisperMessage(targetPlayer, text)
                 end
             end
         end
-        -- Legacy fallback
         local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
         if chatEvents then
             local sayMsg = chatEvents:FindFirstChild("SayMessageRequest")
@@ -342,9 +359,6 @@ local function SendWhisperMessage(targetPlayer, text)
     end)
 end
 
--- Response system — notification + optional whisper or chat
--- whisperTarget: if set, message goes via whisper (never public chat)
--- forceChat: if true AND no whisperTarget, message goes to public chat
 local function Respond(message, whisperTarget, forceChat)
     Log("OK", message)
     SendNotification("Bot", message, 3)
@@ -355,8 +369,6 @@ local function Respond(message, whisperTarget, forceChat)
     end
 end
 
--- Private response — always whispers, never leaks to public chat
--- Used exclusively for help/cmds to honor user privacy
 local function RespondPrivate(message, targetPlayer)
     Log("OK", message)
     SendNotification("Bot", message, 5)
@@ -373,13 +385,10 @@ local function RespondError(message, whisperTarget)
     end
 end
 
--- Permission system — fixed: permed users work even in private mode
--- Private mode blocks UNPERMED users, not permed ones
 local function GetPermLevel(player)
     if not player then return 0 end
     if player.Name:lower() == SuperOwner:lower() then return 4 end
     local stored = PermittedUsers[player.Name:lower()] or 0
-    -- Public mode grants level 1 to everyone, enabling basic command access
     if BotMode == "public" and stored < 1 then return 1 end
     return stored
 end
@@ -394,15 +403,12 @@ local function IsSuperOwner(player)
     return player and player.Name:lower() == SuperOwner:lower()
 end
 
--- Fixed CanUseBot: permed users (level >= 1) ALWAYS have access regardless of mode
--- Only unpermed users are blocked in private mode
 local function CanUseBot(player)
     if IsSuperOwner(player) then return true end
     if GetPermLevel(player) >= 1 then return true end
     return false
 end
 
--- Cooldown — SuperOwner exempt, prevents command spam from other users
 local function IsOnCooldown(player)
     if IsSuperOwner(player) then return false end
     local key = player.Name:lower()
@@ -412,7 +418,6 @@ local function IsOnCooldown(player)
     return false
 end
 
--- Safe character access — nil-safe wrappers used throughout all command handlers
 local function GetCharacter(player)
     if not player then return nil end
     return player.Character
@@ -444,17 +449,14 @@ local function IsBotAlive()   return IsAlive(LocalPlayer) end
 local function EnsureCharacter()
     if not LocalPlayer.Character then
         LocalPlayer.CharacterAdded:Wait()
-        task.wait(0.5)
+        task.wait(0.3)
     end
     return LocalPlayer.Character
 end
 
--- Smart target finder v4 — supports: me, all, others, random, nearest, farthest,
--- murd, sherif, team, enemies, partial name, display name, userid
--- Improved string matching using string.find for partial/fuzzy resolution
 local function GetMultipleTargets(stringInput, executorPlayer)
     if not stringInput or stringInput == "" then return {} end
-    stringInput = stringInput:lower():match("^%s*(.-)%s*$") -- trim whitespace
+    stringInput = stringInput:lower():match("^%s*(.-)%s*$")
 
     if stringInput == "all" then
         local targets = {}
@@ -462,14 +464,12 @@ local function GetMultipleTargets(stringInput, executorPlayer)
             if p ~= LocalPlayer then table.insert(targets, p) end
         end
         return targets
-
     elseif stringInput == "others" then
         local targets = {}
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer and p ~= executorPlayer then table.insert(targets, p) end
         end
         return targets
-
     elseif stringInput == "team" or stringInput == "teammates" then
         local targets = {}
         if executorPlayer and executorPlayer.Team then
@@ -480,7 +480,6 @@ local function GetMultipleTargets(stringInput, executorPlayer)
             end
         end
         return targets
-
     elseif stringInput == "enemies" or stringInput == "enemy" then
         local targets = {}
         if executorPlayer and executorPlayer.Team then
@@ -497,14 +496,12 @@ local function GetMultipleTargets(stringInput, executorPlayer)
 
     if stringInput == "me" then
         single = executorPlayer
-
     elseif stringInput == "random" or stringInput == "rand" then
         local pool = {}
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer then table.insert(pool, p) end
         end
         if #pool > 0 then single = pool[math.random(1, #pool)] end
-
     elseif stringInput == "nearest" or stringInput == "near" or stringInput == "closest" then
         local botHRP = GetBotHRP()
         if botHRP then
@@ -519,7 +516,6 @@ local function GetMultipleTargets(stringInput, executorPlayer)
                 end
             end
         end
-
     elseif stringInput == "farthest" or stringInput == "far" then
         local botHRP = GetBotHRP()
         if botHRP then
@@ -534,7 +530,6 @@ local function GetMultipleTargets(stringInput, executorPlayer)
                 end
             end
         end
-
     elseif stringInput == "murd" or stringInput == "murderer" then
         for _, p in ipairs(Players:GetPlayers()) do
             pcall(function()
@@ -544,7 +539,6 @@ local function GetMultipleTargets(stringInput, executorPlayer)
             end)
             if single then break end
         end
-
     elseif stringInput == "sherif" or stringInput == "sheriff" then
         for _, p in ipairs(Players:GetPlayers()) do
             pcall(function()
@@ -555,41 +549,30 @@ local function GetMultipleTargets(stringInput, executorPlayer)
             end)
             if single then break end
         end
-
     else
-        -- Try UserId match
         local numInput = tonumber(stringInput)
         if numInput then
             for _, p in ipairs(Players:GetPlayers()) do
                 if p.UserId == numInput then single = p; break end
             end
         end
-
-        -- Improved fuzzy matching: exact > prefix > substring (both Name and DisplayName)
         if not single then
             local bestMatch = nil
-            local bestScore = 0 -- 3=exact, 2=prefix, 1=substring
-
+            local bestScore = 0
             for _, p in ipairs(Players:GetPlayers()) do
                 local nameLow = p.Name:lower()
                 local displayLow = p.DisplayName:lower()
-
-                -- Exact match is highest priority
                 if nameLow == stringInput or displayLow == stringInput then
                     single = p
                     bestMatch = nil
                     break
                 end
-
-                -- Prefix match (second priority)
                 if nameLow:sub(1, #stringInput) == stringInput or displayLow:sub(1, #stringInput) == stringInput then
                     if bestScore < 2 or #p.Name < (bestMatch and #bestMatch.Name or math.huge) then
                         bestMatch = p
                         bestScore = 2
                     end
                 end
-
-                -- Substring match via string.find (third priority, catches partial names anywhere)
                 if bestScore < 2 then
                     if nameLow:find(stringInput, 1, true) or displayLow:find(stringInput, 1, true) then
                         if bestScore < 1 or #p.Name < (bestMatch and #bestMatch.Name or math.huge) then
@@ -603,7 +586,10 @@ local function GetMultipleTargets(stringInput, executorPlayer)
         end
     end
 
-    if single then return {single} end
+    if single then
+        LastTarget = single
+        return {single}
+    end
     return {}
 end
 
@@ -612,7 +598,6 @@ local function GetSmartTarget(stringInput, executorPlayer)
     return targets[1]
 end
 
--- Connection manager — safe disconnect with nil-guarding
 local function DisconnectSafe(name)
     if ActiveConnections[name] then
         pcall(function() ActiveConnections[name]:Disconnect() end)
@@ -622,7 +607,7 @@ end
 
 local function StopAllLoops()
     for name, _ in pairs(ActiveConnections) do
-        if name ~= "NoClip" and name ~= "AntiAFK" and name ~= "AntiVoid" then
+        if name ~= "NoClip" and name ~= "AntiAFK" and name ~= "AntiVoid" and name ~= "AntiFling" and name ~= "AntiSlow" and name ~= "AutoRespawn" then
             DisconnectSafe(name)
         end
     end
@@ -644,6 +629,15 @@ local function StopAllLoops()
     IsDancing = false
     IsAuraActive = false
     IsTracking = false
+    IsMagnetOn = false
+    IsLoopTP = false
+    IsAutoShoot = false
+    IsAutoMurd = false
+    IsWallBang = false
+    IsFlingBusy = false
+    LoopTPTarget = nil
+    AutoShootTarget = nil
+    AutoMurdTarget = nil
     TrackTarget = nil
     for _, part in ipairs(CageParts) do pcall(function() part:Destroy() end) end
     CageParts = {}
@@ -661,11 +655,12 @@ local function StopAllLoops()
             end
         end
     end)
-    Log("SYS", "All active loops stopped.")
 end
 
 local function FullCleanup()
     for name, _ in pairs(ActiveConnections) do DisconnectSafe(name) end
+    if GodHealthConnection then pcall(function() GodHealthConnection:Disconnect() end) GodHealthConnection = nil end
+    if GodDiedConnection then pcall(function() GodDiedConnection:Disconnect() end) GodDiedConnection = nil end
     if FlyBodyGyro then pcall(function() FlyBodyGyro:Destroy() end) FlyBodyGyro = nil end
     if FlyBodyVelocity then pcall(function() FlyBodyVelocity:Destroy() end) FlyBodyVelocity = nil end
     if PlatformPart then pcall(function() PlatformPart:Destroy() end) PlatformPart = nil end
@@ -687,6 +682,10 @@ local function FullCleanup()
         end)
     end
     ESPObjects = {}
+    for target, parts in pairs(FreezeCages) do
+        for _, part in ipairs(parts) do pcall(function() part:Destroy() end) end
+    end
+    FreezeCages = {}
     pcall(function() Workspace.Gravity = OriginalGravity end)
     pcall(function()
         Lighting.Ambient = OriginalLighting.Ambient
@@ -730,17 +729,23 @@ local function FullCleanup()
     IsAuraActive = false
     IsTracking = false
     IsFlingBusy = false
-    Log("SYS", "Full cleanup completed.")
+    IsMagnetOn = false
+    IsAntiSlow = false
+    IsAntiFling = false
+    IsLoopTP = false
+    IsAutoShoot = false
+    IsAutoMurd = false
+    IsWallBang = false
+    IsAutoRespawn = false
 end
 genv.__ULTIMATE_BOT_CLEANUP = FullCleanup
 
--- NoClip engine — disables CanCollide on all character BaseParts every Stepped frame
 local function StartNoClip()
     DisconnectSafe("NoClip")
     IsNoClip = true
     ActiveConnections.NoClip = RunService.Stepped:Connect(function()
         pcall(function()
-            if IsFloorFlying then return end -- floor fly needs collision, skip noclip
+            if IsFloorFlying then return end
             local char = LocalPlayer.Character
             if not char then return end
             for _, part in ipairs(char:GetDescendants()) do
@@ -759,54 +764,317 @@ end
 
 StartNoClip()
 
--- Thread-safe fling engine v4 — mutex-locked to prevent accidental multi-target collateral
--- Only one fling operation can run at a time; subsequent requests queue and wait
-local function ExecutePhysicalFling(targetPlayer)
-    -- Spin-wait for mutex — if another fling is active, wait up to 15 seconds
+local function FlingMethod1_CFrameSlam(targetPlayer, maxIter)
+    local botHRP = GetBotHRP()
+    local botHum = GetBotHumanoid()
+    if not botHRP or not botHum then return false end
+    local savedPos = botHRP.CFrame
+    botHum:ChangeState(Enum.HumanoidStateType.Physics)
+    local bv = Instance.new("BodyVelocity")
+    bv.Velocity = Vector3.new(FlingPower, FlingPower, FlingPower)
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.P = 9999
+    bv.Parent = botHRP
+    local bav = Instance.new("BodyAngularVelocity")
+    bav.AngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower)
+    bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bav.P = 9999
+    bav.Parent = botHRP
+    local killed = false
+    for i = 1, (maxIter or 80) do
+        if not targetPlayer or not targetPlayer.Parent then break end
+        if not IsAlive(targetPlayer) then killed = true; break end
+        local tHRP = GetHRP(targetPlayer)
+        if not tHRP then break end
+        local currentBotHRP = GetBotHRP()
+        if not currentBotHRP then break end
+        currentBotHRP.CFrame = tHRP.CFrame
+        RunService.Heartbeat:Wait()
+    end
+    pcall(function() bv:Destroy() end)
+    pcall(function() bav:Destroy() end)
+    local resetHRP = GetBotHRP()
+    if resetHRP then
+        resetHRP.CFrame = savedPos
+        resetHRP.AssemblyLinearVelocity = Vector3.zero
+        resetHRP.AssemblyAngularVelocity = Vector3.zero
+    end
+    local resetHum = GetBotHumanoid()
+    if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+    return killed or not IsAlive(targetPlayer)
+end
+
+local function FlingMethod2_MultiAngleSlam(targetPlayer, maxIter)
+    local botHRP = GetBotHRP()
+    local botHum = GetBotHumanoid()
+    if not botHRP or not botHum then return false end
+    local savedPos = botHRP.CFrame
+    botHum:ChangeState(Enum.HumanoidStateType.Physics)
+    local bv = Instance.new("BodyVelocity")
+    bv.Velocity = Vector3.new(FlingPower, 0, FlingPower)
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.P = 9999
+    bv.Parent = botHRP
+    local bav = Instance.new("BodyAngularVelocity")
+    bav.AngularVelocity = Vector3.new(0, FlingPower, FlingPower)
+    bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bav.P = 9999
+    bav.Parent = botHRP
+    local killed = false
+    local angles = {
+        CFrame.new(0, 0, 0),
+        CFrame.new(2, 0, 0),
+        CFrame.new(-2, 0, 0),
+        CFrame.new(0, 2, 0),
+        CFrame.new(0, -2, 0),
+        CFrame.new(0, 0, 2),
+        CFrame.new(0, 0, -2),
+        CFrame.new(1, 1, 1),
+        CFrame.new(-1, -1, -1),
+    }
+    for i = 1, (maxIter or 90) do
+        if not targetPlayer or not targetPlayer.Parent then break end
+        if not IsAlive(targetPlayer) then killed = true; break end
+        local tHRP = GetHRP(targetPlayer)
+        if not tHRP then break end
+        local currentBotHRP = GetBotHRP()
+        if not currentBotHRP then break end
+        local angleOffset = angles[(i % #angles) + 1]
+        currentBotHRP.CFrame = tHRP.CFrame * angleOffset
+        RunService.Heartbeat:Wait()
+    end
+    pcall(function() bv:Destroy() end)
+    pcall(function() bav:Destroy() end)
+    local resetHRP = GetBotHRP()
+    if resetHRP then
+        resetHRP.CFrame = savedPos
+        resetHRP.AssemblyLinearVelocity = Vector3.zero
+        resetHRP.AssemblyAngularVelocity = Vector3.zero
+    end
+    local resetHum = GetBotHumanoid()
+    if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+    return killed or not IsAlive(targetPlayer)
+end
+
+local function FlingMethod3_VelocityBurst(targetPlayer, maxIter)
+    local botHRP = GetBotHRP()
+    local botHum = GetBotHumanoid()
+    if not botHRP or not botHum then return false end
+    local savedPos = botHRP.CFrame
+    local killed = false
+    for i = 1, (maxIter or 60) do
+        if not targetPlayer or not targetPlayer.Parent then break end
+        if not IsAlive(targetPlayer) then killed = true; break end
+        local tHRP = GetHRP(targetPlayer)
+        if not tHRP then break end
+        local currentBotHRP = GetBotHRP()
+        local currentBotHum = GetBotHumanoid()
+        if not currentBotHRP or not currentBotHum then break end
+        currentBotHum:ChangeState(Enum.HumanoidStateType.Physics)
+        currentBotHRP.CFrame = tHRP.CFrame
+        currentBotHRP.AssemblyLinearVelocity = Vector3.new(
+            math.random(-1, 1) * FlingPower,
+            math.random(-1, 1) * FlingPower,
+            math.random(-1, 1) * FlingPower
+        )
+        currentBotHRP.AssemblyAngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower)
+        RunService.Heartbeat:Wait()
+        currentBotHRP = GetBotHRP()
+        if currentBotHRP then
+            currentBotHRP.CFrame = tHRP.CFrame * CFrame.new(math.random(-1,1), math.random(-1,1), math.random(-1,1))
+        end
+        RunService.Heartbeat:Wait()
+    end
+    local resetHRP = GetBotHRP()
+    if resetHRP then
+        resetHRP.CFrame = savedPos
+        resetHRP.AssemblyLinearVelocity = Vector3.zero
+        resetHRP.AssemblyAngularVelocity = Vector3.zero
+    end
+    local resetHum = GetBotHumanoid()
+    if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+    return killed or not IsAlive(targetPlayer)
+end
+
+local function FlingMethod4_RapidCollision(targetPlayer, maxIter)
+    local botHRP = GetBotHRP()
+    local botHum = GetBotHumanoid()
+    if not botHRP or not botHum then return false end
+    local savedPos = botHRP.CFrame
+    botHum:ChangeState(Enum.HumanoidStateType.Physics)
+    local killed = false
+    local char = LocalPlayer.Character
+    for i = 1, (maxIter or 100) do
+        if not targetPlayer or not targetPlayer.Parent then break end
+        if not IsAlive(targetPlayer) then killed = true; break end
+        local tHRP = GetHRP(targetPlayer)
+        if not tHRP then break end
+        local currentBotHRP = GetBotHRP()
+        if not currentBotHRP then break end
+        if char then
+            for _, part in ipairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = (i % 2 == 0)
+                end
+            end
+        end
+        local offset = Vector3.new(
+            math.cos(i * 0.5) * 2,
+            math.sin(i * 0.3) * 2,
+            math.sin(i * 0.5) * 2
+        )
+        currentBotHRP.CFrame = tHRP.CFrame * CFrame.new(offset.X, offset.Y, offset.Z)
+        currentBotHRP.AssemblyLinearVelocity = (tHRP.Position - currentBotHRP.Position).Unit * FlingPower
+        RunService.Heartbeat:Wait()
+    end
+    if char then
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+    end
+    local resetHRP = GetBotHRP()
+    if resetHRP then
+        resetHRP.CFrame = savedPos
+        resetHRP.AssemblyLinearVelocity = Vector3.zero
+        resetHRP.AssemblyAngularVelocity = Vector3.zero
+    end
+    local resetHum = GetBotHumanoid()
+    if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+    return killed or not IsAlive(targetPlayer)
+end
+
+local function FlingMethod5_SeatFling(targetPlayer, maxIter)
+    local botHRP = GetBotHRP()
+    local botHum = GetBotHumanoid()
+    if not botHRP or not botHum then return false end
+    local savedPos = botHRP.CFrame
+    local killed = false
+    local seat = Instance.new("Seat")
+    seat.Size = Vector3.new(1, 1, 1)
+    seat.Transparency = 1
+    seat.CanCollide = false
+    seat.Anchored = false
+    seat.Name = "FlingSeat"
+    seat.Parent = Workspace
+    for i = 1, (maxIter or 70) do
+        if not targetPlayer or not targetPlayer.Parent then break end
+        if not IsAlive(targetPlayer) then killed = true; break end
+        local tHRP = GetHRP(targetPlayer)
+        if not tHRP then break end
+        local currentBotHRP = GetBotHRP()
+        if not currentBotHRP then break end
+        seat.CFrame = tHRP.CFrame
+        seat.AssemblyLinearVelocity = Vector3.new(
+            math.random(-1, 1) * FlingPower,
+            FlingPower,
+            math.random(-1, 1) * FlingPower
+        )
+        currentBotHRP.CFrame = tHRP.CFrame
+        currentBotHRP.AssemblyLinearVelocity = Vector3.new(FlingPower, FlingPower, FlingPower)
+        RunService.Heartbeat:Wait()
+    end
+    pcall(function() seat:Destroy() end)
+    local resetHRP = GetBotHRP()
+    if resetHRP then
+        resetHRP.CFrame = savedPos
+        resetHRP.AssemblyLinearVelocity = Vector3.zero
+        resetHRP.AssemblyAngularVelocity = Vector3.zero
+    end
+    local resetHum = GetBotHumanoid()
+    if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+    return killed or not IsAlive(targetPlayer)
+end
+
+local FlingMethods = {
+    FlingMethod1_CFrameSlam,
+    FlingMethod2_MultiAngleSlam,
+    FlingMethod3_VelocityBurst,
+    FlingMethod4_RapidCollision,
+    FlingMethod5_SeatFling,
+}
+
+local function ExecuteSmartFling(targetPlayer)
     local waitStart = tick()
     while IsFlingBusy do
-        task.wait(0.1)
-        if tick() - waitStart > 15 then return end -- timeout safety
+        task.wait(0.05)
+        if tick() - waitStart > 10 then return end
     end
     IsFlingBusy = true
+    local success = pcall(function()
+        if not targetPlayer or not targetPlayer.Parent or not IsAlive(targetPlayer) then return end
+        if PreferredFlingMethod > 0 and PreferredFlingMethod <= #FlingMethods then
+            local result = FlingMethods[PreferredFlingMethod](targetPlayer)
+            if result then return end
+        end
+        for idx, method in ipairs(FlingMethods) do
+            if not targetPlayer or not targetPlayer.Parent or not IsAlive(targetPlayer) then return end
+            if not IsBotAlive() then
+                task.wait(1)
+                EnsureCharacter()
+                task.wait(0.3)
+            end
+            local result = method(targetPlayer)
+            if result then return end
+            task.wait(0.1)
+        end
+    end)
+    IsFlingBusy = false
+end
 
-    local success, err = pcall(function()
-        if not targetPlayer or not targetPlayer.Parent then IsFlingBusy = false return end
+local function ExecuteTargetedFling(targetPlayer)
+    local waitStart = tick()
+    while IsFlingBusy do
+        task.wait(0.05)
+        if tick() - waitStart > 10 then return end
+    end
+    IsFlingBusy = true
+    pcall(function()
+        if not targetPlayer or not targetPlayer.Parent or not IsAlive(targetPlayer) then IsFlingBusy = false return end
         local botHRP = GetBotHRP()
         local botHum = GetBotHumanoid()
         if not botHRP or not botHum then IsFlingBusy = false return end
-
         local savedPos = botHRP.CFrame
         botHum:ChangeState(Enum.HumanoidStateType.Physics)
-
         local bv = Instance.new("BodyVelocity")
         bv.Velocity = Vector3.new(FlingPower, FlingPower, FlingPower)
         bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
         bv.P = 9999
         bv.Parent = botHRP
-
         local bav = Instance.new("BodyAngularVelocity")
         bav.AngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower)
         bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
         bav.P = 9999
         bav.Parent = botHRP
-
-        -- Tight loop until target dies, leaves, or safety cap reached
-        -- Reduced from 300 to 150 for faster completion
-        for i = 1, 150 do
+        for i = 1, 80 do
             if not targetPlayer or not targetPlayer.Parent then break end
             if not IsAlive(targetPlayer) then break end
             local tHRP = GetHRP(targetPlayer)
             if not tHRP then break end
             local currentBotHRP = GetBotHRP()
             if not currentBotHRP then break end
-            currentBotHRP.CFrame = tHRP.CFrame
+            local nearbyNonTarget = false
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and p ~= targetPlayer and IsAlive(p) then
+                    local pHRP = GetHRP(p)
+                    if pHRP and tHRP then
+                        local dist = (pHRP.Position - tHRP.Position).Magnitude
+                        if dist < 4 then
+                            nearbyNonTarget = true
+                            break
+                        end
+                    end
+                end
+            end
+            if nearbyNonTarget then
+                RunService.Heartbeat:Wait()
+                RunService.Heartbeat:Wait()
+            else
+                currentBotHRP.CFrame = tHRP.CFrame
+            end
             RunService.Heartbeat:Wait()
         end
-
         pcall(function() bv:Destroy() end)
         pcall(function() bav:Destroy() end)
-
         local resetHRP = GetBotHRP()
         if resetHRP then
             resetHRP.CFrame = savedPos
@@ -816,75 +1084,185 @@ local function ExecutePhysicalFling(targetPlayer)
         local resetHum = GetBotHumanoid()
         if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
     end)
-
     IsFlingBusy = false
-    if not success then Log("ERROR", "Fling failed: " .. tostring(err)) end
 end
 
--- Directional fling — used by launch/yeet with custom velocity vectors
--- Reduced maxAttempts for near-instantaneous energy transfer
-local function ExecuteDirectionalFling(targetPlayer, direction, power, maxAttempts)
-    local waitStart = tick()
-    while IsFlingBusy do
-        task.wait(0.1)
-        if tick() - waitStart > 15 then return end
-    end
-    IsFlingBusy = true
+local function YeetPlayer(target)
+    task.spawn(function()
+        local waitStart = tick()
+        while IsFlingBusy do
+            task.wait(0.05)
+            if tick() - waitStart > 10 then return end
+        end
+        IsFlingBusy = true
+        pcall(function()
+            if not target or not target.Parent or not IsAlive(target) then IsFlingBusy = false return end
+            local targetHRP = GetHRP(target)
+            local botHRP = GetBotHRP()
+            local botHum = GetBotHumanoid()
+            if not targetHRP or not botHRP or not botHum then IsFlingBusy = false return end
+            local savedPos = botHRP.CFrame
+            botHum:ChangeState(Enum.HumanoidStateType.Physics)
+            local lookDir = targetHRP.CFrame.LookVector
+            local yeetDir = (Vector3.new(lookDir.X, 3, lookDir.Z)).Unit
+            local bv = Instance.new("BodyVelocity")
+            bv.Velocity = yeetDir * FlingPower * 3
+            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            bv.P = 9999
+            bv.Parent = botHRP
+            local bav = Instance.new("BodyAngularVelocity")
+            bav.AngularVelocity = Vector3.new(FlingPower, FlingPower * 2, FlingPower)
+            bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+            bav.P = 9999
+            bav.Parent = botHRP
+            local angles = {
+                CFrame.new(0, -3, 0),
+                CFrame.new(1, -2, 0),
+                CFrame.new(-1, -2, 0),
+                CFrame.new(0, -2, 1),
+                CFrame.new(0, -2, -1),
+                CFrame.new(0, -4, 0),
+                CFrame.new(2, -3, 0),
+                CFrame.new(-2, -3, 0),
+            }
+            for i = 1, 50 do
+                if not target or not target.Parent then break end
+                if not IsAlive(target) then break end
+                local tHRP = GetHRP(target)
+                if not tHRP then break end
+                local cBotHRP = GetBotHRP()
+                if not cBotHRP then break end
+                local offset = angles[(i % #angles) + 1]
+                cBotHRP.CFrame = tHRP.CFrame * offset
+                RunService.Heartbeat:Wait()
+            end
+            pcall(function() bv:Destroy() end)
+            pcall(function() bav:Destroy() end)
+            local resetHRP = GetBotHRP()
+            if resetHRP then
+                resetHRP.CFrame = savedPos
+                resetHRP.AssemblyLinearVelocity = Vector3.zero
+                resetHRP.AssemblyAngularVelocity = Vector3.zero
+            end
+            local resetHum = GetBotHumanoid()
+            if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        end)
+        IsFlingBusy = false
+    end)
+end
 
-    pcall(function()
-        if not targetPlayer or not targetPlayer.Parent or not IsAlive(targetPlayer) then IsFlingBusy = false return end
-        local targetHRP = GetHRP(targetPlayer)
+local function LaunchPlayer(target)
+    task.spawn(function()
+        local waitStart = tick()
+        while IsFlingBusy do
+            task.wait(0.05)
+            if tick() - waitStart > 10 then return end
+        end
+        IsFlingBusy = true
+        pcall(function()
+            if not target or not target.Parent or not IsAlive(target) then IsFlingBusy = false return end
+            local targetHRP = GetHRP(target)
+            local botHRP = GetBotHRP()
+            local botHum = GetBotHumanoid()
+            if not targetHRP or not botHRP or not botHum then IsFlingBusy = false return end
+            local savedPos = botHRP.CFrame
+            botHum:ChangeState(Enum.HumanoidStateType.Physics)
+            local bv = Instance.new("BodyVelocity")
+            bv.Velocity = Vector3.new(0, FlingPower * 3, 0)
+            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            bv.P = 9999
+            bv.Parent = botHRP
+            local bav = Instance.new("BodyAngularVelocity")
+            bav.AngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower)
+            bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+            bav.P = 9999
+            bav.Parent = botHRP
+            for i = 1, 40 do
+                if not target or not target.Parent then break end
+                if not IsAlive(target) then break end
+                local tHRP = GetHRP(target)
+                if not tHRP then break end
+                local cBotHRP = GetBotHRP()
+                if not cBotHRP then break end
+                cBotHRP.CFrame = CFrame.new(tHRP.Position.X, tHRP.Position.Y - 3, tHRP.Position.Z)
+                RunService.Heartbeat:Wait()
+            end
+            pcall(function() bv:Destroy() end)
+            pcall(function() bav:Destroy() end)
+            local resetHRP = GetBotHRP()
+            if resetHRP then
+                resetHRP.CFrame = savedPos
+                resetHRP.AssemblyLinearVelocity = Vector3.zero
+                resetHRP.AssemblyAngularVelocity = Vector3.zero
+            end
+            local resetHum = GetBotHumanoid()
+            if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        end)
+        IsFlingBusy = false
+    end)
+end
+
+local function RocketPlayer(target)
+    task.spawn(function()
+        local waitStart = tick()
+        while IsFlingBusy do
+            task.wait(0.05)
+            if tick() - waitStart > 10 then return end
+        end
+        IsFlingBusy = true
+        pcall(function()
+            if not target or not target.Parent or not IsAlive(target) then IsFlingBusy = false return end
+            local targetHRP = GetHRP(target)
+            local botHRP = GetBotHRP()
+            local botHum = GetBotHumanoid()
+            if not targetHRP or not botHRP or not botHum then IsFlingBusy = false return end
+            local savedPos = botHRP.CFrame
+            botHum:ChangeState(Enum.HumanoidStateType.Physics)
+            local bv = Instance.new("BodyVelocity")
+            bv.Velocity = Vector3.new(0, FlingPower * 5, 0)
+            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            bv.P = 99999
+            bv.Parent = botHRP
+            local bav = Instance.new("BodyAngularVelocity")
+            bav.AngularVelocity = Vector3.new(FlingPower * 2, FlingPower * 2, FlingPower * 2)
+            bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+            bav.P = 99999
+            bav.Parent = botHRP
+            for i = 1, 60 do
+                if not target or not target.Parent then break end
+                if not IsAlive(target) then break end
+                local tHRP = GetHRP(target)
+                if not tHRP then break end
+                local cBotHRP = GetBotHRP()
+                if not cBotHRP then break end
+                cBotHRP.CFrame = CFrame.new(tHRP.Position.X, tHRP.Position.Y - 2, tHRP.Position.Z)
+                RunService.Heartbeat:Wait()
+            end
+            pcall(function() bv:Destroy() end)
+            pcall(function() bav:Destroy() end)
+            local resetHRP = GetBotHRP()
+            if resetHRP then
+                resetHRP.CFrame = savedPos
+                resetHRP.AssemblyLinearVelocity = Vector3.zero
+                resetHRP.AssemblyAngularVelocity = Vector3.zero
+            end
+            local resetHum = GetBotHumanoid()
+            if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        end)
+        IsFlingBusy = false
+    end)
+end
+
+local function PullPlayer(target)
+    task.spawn(function()
+        if not target or not target.Parent then return end
         local botHRP = GetBotHRP()
-        local botHum = GetBotHumanoid()
-        if not targetHRP or not botHRP or not botHum then IsFlingBusy = false return end
-
-        local savedPos = botHRP.CFrame
-        botHum:ChangeState(Enum.HumanoidStateType.Physics)
-
-        local bv = Instance.new("BodyVelocity")
-        bv.Velocity = direction * (power or FlingPower)
-        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        bv.P = 9999
-        bv.Parent = botHRP
-
-        local bav = Instance.new("BodyAngularVelocity")
-        bav.AngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower)
-        bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-        bav.P = 9999
-        bav.Parent = botHRP
-
-        local attempts = maxAttempts or 40
-        for i = 1, attempts do
-            if not targetPlayer or not targetPlayer.Parent then break end
-            if not IsAlive(targetPlayer) then break end
-            local tHRP = GetHRP(targetPlayer)
-            if not tHRP then break end
-            local currentBotHRP = GetBotHRP()
-            if not currentBotHRP then break end
-            currentBotHRP.CFrame = tHRP.CFrame
-            RunService.Heartbeat:Wait()
-        end
-
-        pcall(function() bv:Destroy() end)
-        pcall(function() bav:Destroy() end)
-
-        local resetHRP = GetBotHRP()
-        if resetHRP then
-            resetHRP.CFrame = savedPos
-            resetHRP.AssemblyLinearVelocity = Vector3.zero
-            resetHRP.AssemblyAngularVelocity = Vector3.zero
-        end
-        local resetHum = GetBotHumanoid()
-        if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        if not botHRP then return end
+        local dest = botHRP.CFrame
+        BringPlayer(target, dest)
     end)
-
-    IsFlingBusy = false
 end
 
--- Floor fly v2 — bot lays flat under target as a structural platform
--- Noclip is suspended during flight so collision works properly
--- An invisible welded platform part provides a wider landing surface
--- The bot's HRP is rotated 90 degrees on X-axis so the torso faces upward
 local function StartFloorFly(target)
     DisconnectSafe("FloorFly")
     DisconnectSafe("Fly")
@@ -894,31 +1272,25 @@ local function StartFloorFly(target)
     DisconnectSafe("Annoy")
     DisconnectSafe("Creep")
     DisconnectSafe("Mimic")
-
     if FlyBodyGyro then pcall(function() FlyBodyGyro:Destroy() end) FlyBodyGyro = nil end
     if FlyBodyVelocity then pcall(function() FlyBodyVelocity:Destroy() end) FlyBodyVelocity = nil end
-
     IsFloorFlying = true
     FloorFlyTarget = target
-
-    -- Create a wide invisible platform welded to bot for stable footing
     if FloorFlyPlatform then pcall(function() FloorFlyPlatform:Destroy() end) end
     FloorFlyPlatform = Instance.new("Part")
-    FloorFlyPlatform.Size = Vector3.new(10, 1.5, 10)
+    FloorFlyPlatform.Size = Vector3.new(12, 1.5, 12)
     FloorFlyPlatform.Transparency = 1
     FloorFlyPlatform.CanCollide = true
     FloorFlyPlatform.Anchored = true
     FloorFlyPlatform.Massless = true
     FloorFlyPlatform.Name = "FloorFlyPlatform"
     FloorFlyPlatform.Parent = Workspace
-
     ActiveConnections.FloorFly = RunService.Heartbeat:Connect(function()
         pcall(function()
             if not IsFloorFlying then
                 DisconnectSafe("FloorFly")
                 return
             end
-
             local targetPlayer = FloorFlyTarget
             if not targetPlayer or not targetPlayer.Parent or not IsAlive(targetPlayer) then
                 DisconnectSafe("FloorFly")
@@ -928,26 +1300,17 @@ local function StartFloorFly(target)
                 if IsNoClip then StartNoClip() end
                 return
             end
-
             local targetHRP = GetHRP(targetPlayer)
             local botHRP = GetBotHRP()
             local botHum = GetBotHumanoid()
             if not targetHRP or not botHRP or not botHum then return end
-
-            -- Suppress walk/idle animations so the bot stays flat
             botHum:ChangeState(Enum.HumanoidStateType.Physics)
-
-            -- Position 2 studs below target feet, rotated 90° on X to lay flat (torso faces up)
             local targetPos = targetHRP.Position
             local underPos = Vector3.new(targetPos.X, targetPos.Y - 2, targetPos.Z)
             botHRP.CFrame = CFrame.new(underPos) * CFrame.Angles(math.rad(90), 0, 0)
-
-            -- Position the invisible platform exactly at the bot's level for extra collision
             if FloorFlyPlatform and FloorFlyPlatform.Parent then
                 FloorFlyPlatform.CFrame = CFrame.new(underPos.X, underPos.Y + 0.5, underPos.Z)
             end
-
-            -- Enable collision on all bot parts so player can stand on them
             local botChar = LocalPlayer.Character
             if botChar then
                 for _, part in ipairs(botChar:GetDescendants()) do
@@ -956,8 +1319,6 @@ local function StartFloorFly(target)
                     end
                 end
             end
-
-            -- Zero velocity to prevent drift
             botHRP.AssemblyLinearVelocity = Vector3.zero
             botHRP.AssemblyAngularVelocity = Vector3.zero
         end)
@@ -969,57 +1330,58 @@ local function StopFloorFly()
     FloorFlyTarget = nil
     DisconnectSafe("FloorFly")
     if FloorFlyPlatform then pcall(function() FloorFlyPlatform:Destroy() end) FloorFlyPlatform = nil end
-    -- Restore noclip and upright orientation
     if IsNoClip then StartNoClip() end
     pcall(function()
         local hrp = GetBotHRP()
         local hum = GetBotHumanoid()
-        if hrp then
-            hrp.CFrame = CFrame.new(hrp.Position) -- reset rotation to upright
-        end
-        if hum then
-            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-        end
+        if hrp then hrp.CFrame = CFrame.new(hrp.Position) end
+        if hum then hum:ChangeState(Enum.HumanoidStateType.GettingUp) end
     end)
 end
-
--- Multi-layer god mode — 4 defense layers working simultaneously:
--- L1: MaxHealth set to math.huge makes the health bar effectively infinite
--- L2: HealthChanged signal immediately restores any damage within the same frame
--- L3: ForceField (invisible) provides server-recognized damage immunity
--- L4: Heartbeat enforcement loop continuously validates all layers are intact
-local GodHealthConnection = nil
 
 local function StartGodMode()
     DisconnectSafe("God")
     if GodHealthConnection then pcall(function() GodHealthConnection:Disconnect() end) GodHealthConnection = nil end
+    if GodDiedConnection then pcall(function() GodDiedConnection:Disconnect() end) GodDiedConnection = nil end
     IsGodMode = true
-
     local char = LocalPlayer.Character
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
-
-    -- Layer 1: infinite health pool
     hum.MaxHealth = math.huge
     hum.Health = math.huge
-
-    -- Layer 2: instant damage negation via HealthChanged signal
     GodHealthConnection = hum.HealthChanged:Connect(function(newHealth)
         if IsGodMode and hum then
             hum.Health = hum.MaxHealth
         end
     end)
-
-    -- Layer 3: invisible ForceField for engine-level damage blocking
     local ff = char:FindFirstChildOfClass("ForceField")
     if not ff then
         ff = Instance.new("ForceField")
         ff.Visible = false
         ff.Parent = char
     end
-
-    -- Layer 4: continuous enforcement — re-applies all layers if anything gets stripped
+    pcall(function()
+        hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+    end)
+    GodDiedConnection = hum.Died:Connect(function()
+        if IsGodMode then
+            pcall(function()
+                hum.Health = hum.MaxHealth
+                hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end)
+        end
+    end)
+    pcall(function()
+        for _, obj in ipairs(char:GetDescendants()) do
+            if obj:IsA("Script") then
+                local n = obj.Name:lower()
+                if n:find("damage") or n:find("kill") or n:find("hurt") then
+                    pcall(function() obj:Destroy() end)
+                end
+            end
+        end
+    end)
     ActiveConnections.God = RunService.Heartbeat:Connect(function()
         pcall(function()
             if not IsGodMode then DisconnectSafe("God") return end
@@ -1027,12 +1389,26 @@ local function StartGodMode()
             if h then
                 if h.MaxHealth ~= math.huge then h.MaxHealth = math.huge end
                 if h.Health < h.MaxHealth then h.Health = h.MaxHealth end
+                pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+                if h:GetState() == Enum.HumanoidStateType.Dead then
+                    h:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end
             end
             local c = LocalPlayer.Character
-            if c and not c:FindFirstChildOfClass("ForceField") then
-                local f = Instance.new("ForceField")
-                f.Visible = false
-                f.Parent = c
+            if c then
+                if not c:FindFirstChildOfClass("ForceField") then
+                    local f = Instance.new("ForceField")
+                    f.Visible = false
+                    f.Parent = c
+                end
+                for _, obj in ipairs(c:GetDescendants()) do
+                    if obj:IsA("Script") then
+                        local n = obj.Name:lower()
+                        if n:find("damage") or n:find("kill") or n:find("hurt") then
+                            pcall(function() obj:Destroy() end)
+                        end
+                    end
+                end
             end
         end)
     end)
@@ -1041,6 +1417,7 @@ end
 local function StopGodMode()
     DisconnectSafe("God")
     if GodHealthConnection then pcall(function() GodHealthConnection:Disconnect() end) GodHealthConnection = nil end
+    if GodDiedConnection then pcall(function() GodDiedConnection:Disconnect() end) GodDiedConnection = nil end
     IsGodMode = false
     pcall(function()
         local char = LocalPlayer.Character
@@ -1051,12 +1428,12 @@ local function StopGodMode()
             if hum then
                 hum.MaxHealth = 100
                 hum.Health = 100
+                pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, true) end)
             end
         end
     end)
 end
 
--- Invisibility — toggles transparency on all visual parts, decals, particles, and accessories
 local function SetInvisible(state)
     pcall(function()
         local char = LocalPlayer.Character
@@ -1087,24 +1464,61 @@ local function SetInvisible(state)
     end)
 end
 
--- Freeze/Unfreeze — anchors the bot's HRP to lock position
-local function FreezePlayer(target)
+local function FreezePlayerAdvanced(target)
     if not target then return end
     if target == LocalPlayer then
         local hrp = GetBotHRP()
         if hrp then pcall(function() hrp.Anchored = true end) end
+        return
     end
+    local targetHRP = GetHRP(target)
+    if not targetHRP then return end
+    if FreezeCages[target] then
+        for _, part in ipairs(FreezeCages[target]) do pcall(function() part:Destroy() end) end
+    end
+    FreezeCages[target] = {}
+    local pos = targetHRP.Position
+    local sz = 4
+    local walls = {
+        { size = Vector3.new(sz, sz, 0.5), pos = pos + Vector3.new(0, sz/2, sz/2) },
+        { size = Vector3.new(sz, sz, 0.5), pos = pos + Vector3.new(0, sz/2, -sz/2) },
+        { size = Vector3.new(0.5, sz, sz), pos = pos + Vector3.new(sz/2, sz/2, 0) },
+        { size = Vector3.new(0.5, sz, sz), pos = pos + Vector3.new(-sz/2, sz/2, 0) },
+        { size = Vector3.new(sz, 0.5, sz), pos = pos + Vector3.new(0, sz, 0) },
+        { size = Vector3.new(sz, 0.5, sz), pos = pos + Vector3.new(0, 0, 0) },
+    }
+    for _, wallData in ipairs(walls) do
+        pcall(function()
+            local wall = Instance.new("Part")
+            wall.Size = wallData.size
+            wall.Position = wallData.pos
+            wall.Anchored = true
+            wall.Material = Enum.Material.ForceField
+            wall.Transparency = 0.8
+            wall.CanCollide = true
+            wall.Name = "BotFreeze"
+            wall.Parent = Workspace
+            table.insert(FreezeCages[target], wall)
+        end)
+    end
+    task.spawn(function()
+        BringPlayer(target, CFrame.new(pos))
+    end)
 end
 
-local function UnfreezePlayer(target)
+local function UnfreezePlayerAdvanced(target)
     if not target then return end
     if target == LocalPlayer then
         local hrp = GetBotHRP()
         if hrp then pcall(function() hrp.Anchored = false end) end
+        return
+    end
+    if FreezeCages[target] then
+        for _, part in ipairs(FreezeCages[target]) do pcall(function() part:Destroy() end) end
+        FreezeCages[target] = nil
     end
 end
 
--- Anti-AFK — VirtualUser button simulation on idle, fallback to micro-movement
 local function ToggleAntiAFK(state)
     if state then
         DisconnectSafe("AntiAFK")
@@ -1113,7 +1527,7 @@ local function ToggleAntiAFK(state)
             ActiveConnections.AntiAFK = LocalPlayer.Idled:Connect(function()
                 pcall(function()
                     VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
-                    task.wait(0.5)
+                    task.wait(0.3)
                     VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
                 end)
             end)
@@ -1131,7 +1545,6 @@ local function ToggleAntiAFK(state)
     end
 end
 
--- Anti-void — saves last safe position and teleports back if falling below Y=-50
 local LastSafePosition = nil
 
 local function ToggleAntiVoid(state)
@@ -1157,7 +1570,65 @@ local function ToggleAntiVoid(state)
     end
 end
 
--- Infinite jump — re-triggers jump state on every JumpRequest
+local function ToggleAntiFling(state)
+    if state then
+        DisconnectSafe("AntiFling")
+        IsAntiFling = true
+        ActiveConnections.AntiFling = RunService.Heartbeat:Connect(function()
+            pcall(function()
+                local hrp = GetBotHRP()
+                if not hrp then return end
+                local vel = hrp.AssemblyLinearVelocity
+                if vel.Magnitude > 200 then
+                    hrp.AssemblyLinearVelocity = Vector3.zero
+                    hrp.AssemblyAngularVelocity = Vector3.zero
+                end
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LocalPlayer then
+                        local pChar = GetCharacter(p)
+                        if pChar then
+                            for _, part in ipairs(pChar:GetDescendants()) do
+                                if part:IsA("BodyVelocity") or part:IsA("BodyAngularVelocity") then
+                                    local partVel = part:IsA("BodyVelocity") and part.Velocity.Magnitude or part.AngularVelocity.Magnitude
+                                    if partVel > 100 then
+                                        pcall(function()
+                                            local pHRP = GetHRP(p)
+                                            if pHRP then
+                                                pHRP.CanCollide = false
+                                            end
+                                        end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end)
+    else
+        DisconnectSafe("AntiFling")
+        IsAntiFling = false
+    end
+end
+
+local function ToggleAntiSlow(state)
+    if state then
+        DisconnectSafe("AntiSlow")
+        IsAntiSlow = true
+        ActiveConnections.AntiSlow = RunService.Heartbeat:Connect(function()
+            pcall(function()
+                local hum = GetBotHumanoid()
+                if hum and hum.WalkSpeed < 16 then
+                    hum.WalkSpeed = 16
+                end
+            end)
+        end)
+    else
+        DisconnectSafe("AntiSlow")
+        IsAntiSlow = false
+    end
+end
+
 local function ToggleInfJump(state)
     if state then
         DisconnectSafe("InfJump")
@@ -1174,7 +1645,6 @@ local function ToggleInfJump(state)
     end
 end
 
--- Spin — BodyAngularVelocity on Y axis
 local function StartSpin()
     DisconnectSafe("Spin")
     IsSpinning = true
@@ -1213,7 +1683,6 @@ local function StopSpin()
     end)
 end
 
--- Stare — continuously rotates bot to face target
 local function StartStare(target)
     DisconnectSafe("Stare")
     ActiveConnections.Stare = RunService.Heartbeat:Connect(function()
@@ -1229,7 +1698,6 @@ local function StartStare(target)
     end)
 end
 
--- ESP/Highlight — per-player highlight + distance billboard
 local function CreateESPForPlayer(player)
     if player == LocalPlayer then return end
     if ESPObjects[player] then return end
@@ -1244,14 +1712,12 @@ local function CreateESPForPlayer(player)
         highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
         highlight.Adornee = char
         highlight.Parent = char
-
         local billboard = Instance.new("BillboardGui")
         billboard.Size = UDim2.new(0, 200, 0, 50)
         billboard.StudsOffset = Vector3.new(0, 3, 0)
         billboard.AlwaysOnTop = true
         billboard.Adornee = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
         billboard.Parent = char
-
         local nameLabel = Instance.new("TextLabel")
         nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
         nameLabel.BackgroundTransparency = 1
@@ -1263,7 +1729,6 @@ local function CreateESPForPlayer(player)
         nameLabel.Text = player.DisplayName .. " (@" .. player.Name .. ")"
         nameLabel.Name = "ESPName"
         nameLabel.Parent = billboard
-
         local distLabel = Instance.new("TextLabel")
         distLabel.Size = UDim2.new(1, 0, 0.5, 0)
         distLabel.Position = UDim2.new(0, 0, 0.5, 0)
@@ -1276,7 +1741,6 @@ local function CreateESPForPlayer(player)
         distLabel.Text = "? studs"
         distLabel.Name = "ESPDist"
         distLabel.Parent = billboard
-
         ESPObjects[player] = {
             highlight = highlight,
             billboard = billboard,
@@ -1300,7 +1764,7 @@ local function StartESP()
         CreateESPForPlayer(p)
         pcall(function()
             p.CharacterAdded:Connect(function()
-                task.wait(1)
+                task.wait(0.5)
                 if ActiveConnections.ESP then
                     RemoveESPForPlayer(p)
                     CreateESPForPlayer(p)
@@ -1340,7 +1804,6 @@ local function StopESP()
     ESPObjects = {}
 end
 
--- Platform — creates a solid neon part under the bot's feet
 local function CreatePlatform()
     if PlatformPart then pcall(function() PlatformPart:Destroy() end) end
     local hrp = GetBotHRP()
@@ -1357,7 +1820,6 @@ local function CreatePlatform()
     PlatformPart.Parent = Workspace
 end
 
--- View/Spectate camera system
 local OriginalCameraSubject = nil
 
 local function ViewPlayer(target)
@@ -1382,10 +1844,6 @@ local function UnviewPlayer()
     end
 end
 
--- Improved bring — works reliably with or without equipped items
--- Uses physics collision pushing: bot rapidly teleports to target then back to origin
--- Smart loop: continues until target is within 5 studs of destination or max iterations
--- Temporarily boosts bot health to survive kill bricks during the bring sequence
 local function BringPlayer(target, customDest)
     if not target then return end
     task.spawn(function()
@@ -1393,10 +1851,7 @@ local function BringPlayer(target, customDest)
             local botHRP = GetBotHRP()
             local botHum = GetBotHumanoid()
             if not botHRP or not botHum then return end
-
             local savedPos = customDest or botHRP.CFrame
-
-            -- Temporary health boost if not in god mode to survive the rapid teleporting
             local wasGod = IsGodMode
             if not wasGod then
                 pcall(function()
@@ -1404,31 +1859,20 @@ local function BringPlayer(target, customDest)
                     botHum.Health = math.huge
                 end)
             end
-
             botHum:ChangeState(Enum.HumanoidStateType.Physics)
-
             for i = 1, BringIterations do
                 local tHRP = GetHRP(target)
                 local bHRP = GetBotHRP()
                 if not tHRP or not bHRP or not target.Parent then break end
-
-                -- Check if target arrived close enough to destination
                 local dist = (tHRP.Position - savedPos.Position).Magnitude
                 if dist < 5 then break end
-
-                -- Teleport to target position to push them via physics collision
                 bHRP.CFrame = tHRP.CFrame
                 RunService.Heartbeat:Wait()
-                -- Teleport back to origin immediately
                 bHRP = GetBotHRP()
                 if bHRP then bHRP.CFrame = savedPos end
             end
-
-            -- Clean up: restore state
             local resetHum = GetBotHumanoid()
-            if resetHum then
-                resetHum:ChangeState(Enum.HumanoidStateType.GettingUp)
-            end
+            if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
             if not wasGod then
                 pcall(function()
                     local h = GetBotHumanoid()
@@ -1439,7 +1883,6 @@ local function BringPlayer(target, customDest)
     end)
 end
 
--- Annoy — rapid random teleports around target
 local function StartAnnoy(target)
     DisconnectSafe("Annoy")
     DisconnectSafe("Follow")
@@ -1464,7 +1907,6 @@ local function StartAnnoy(target)
     end)
 end
 
--- MM2 systems — coin finding, weapon grabbing, role detection, xray, godknife
 local function FindMM2Coins()
     local coins = {}
     pcall(function()
@@ -1497,6 +1939,73 @@ local function FindMM2Coins()
     return coins
 end
 
+local function WalkToCoin(coin)
+    if not coin or not coin.Parent then return false end
+    local botHRP = GetBotHRP()
+    local botHum = GetBotHumanoid()
+    if not botHRP or not botHum then return false end
+    local targetPos = coin.Position
+    local dist = (botHRP.Position - targetPos).Magnitude
+    if dist > 500 then return false end
+    botHum:MoveTo(targetPos)
+    local startTime = tick()
+    while tick() - startTime < 8 do
+        local currentHRP = GetBotHRP()
+        if not currentHRP then return false end
+        if not coin or not coin.Parent then return true end
+        local currentDist = (currentHRP.Position - targetPos).Magnitude
+        if currentDist < 5 then
+            if ExecutorInfo.HasFireTouchInterest then
+                local ti = coin:FindFirstChild("TouchInterest")
+                if ti then
+                    firetouchinterest(currentHRP, coin, 0)
+                    task.wait(0.03)
+                    firetouchinterest(currentHRP, coin, 1)
+                end
+            end
+            return true
+        end
+        task.wait(0.1)
+    end
+    return false
+end
+
+local function StartCoinFarmWalk()
+    DisconnectSafe("CoinFarm")
+    IsCoinFarming = true
+    task.spawn(function()
+        while IsCoinFarming do
+            pcall(function()
+                local coins = FindMM2Coins()
+                if #coins == 0 then task.wait(2) return end
+                local botHRP = GetBotHRP()
+                if not botHRP then task.wait(1) return end
+                table.sort(coins, function(a, b)
+                    local da = (a.Position - botHRP.Position).Magnitude
+                    local db = (b.Position - botHRP.Position).Magnitude
+                    return da < db
+                end)
+                for _, coin in ipairs(coins) do
+                    if not IsCoinFarming then break end
+                    if coin and coin.Parent then
+                        WalkToCoin(coin)
+                        task.wait(math.random(3, 8) / 10)
+                    end
+                end
+            end)
+            task.wait(0.5)
+        end
+    end)
+    ActiveConnections.CoinFarm = RunService.Heartbeat:Connect(function()
+        if not IsCoinFarming then DisconnectSafe("CoinFarm") end
+    end)
+end
+
+local function StopCoinFarm()
+    IsCoinFarming = false
+    DisconnectSafe("CoinFarm")
+end
+
 local function GrabWeapon(weaponName)
     pcall(function()
         local function findWeapon(parent)
@@ -1518,7 +2027,7 @@ local function GrabWeapon(weaponName)
                 local botHRP = GetBotHRP()
                 if botHRP then
                     botHRP.CFrame = handle.CFrame
-                    task.wait(0.2)
+                    task.wait(0.15)
                     if weapon.Parent == Workspace then
                         pcall(function() weapon.Parent = LocalPlayer.Backpack end)
                     end
@@ -1566,6 +2075,124 @@ local function GetMM2Roles()
     return roles
 end
 
+local function StartAutoShoot(target)
+    DisconnectSafe("AutoShoot")
+    IsAutoShoot = true
+    AutoShootTarget = target
+    ActiveConnections.AutoShoot = RunService.Heartbeat:Connect(function()
+        pcall(function()
+            if not IsAutoShoot then DisconnectSafe("AutoShoot") return end
+            local actualTarget = AutoShootTarget
+            if actualTarget and type(actualTarget) == "string" and actualTarget:lower() == "murd" then
+                local roles = GetMM2Roles()
+                if roles.murderer and IsAlive(roles.murderer) then
+                    actualTarget = roles.murderer
+                else
+                    return
+                end
+            end
+            if not actualTarget or type(actualTarget) == "string" then return end
+            if not actualTarget.Parent or not IsAlive(actualTarget) then return end
+            local gun = nil
+            local char = LocalPlayer.Character
+            if char then
+                gun = char:FindFirstChild("Gun") or char:FindFirstChild("Revolver")
+            end
+            if not gun then
+                local bpGun = LocalPlayer.Backpack:FindFirstChild("Gun") or LocalPlayer.Backpack:FindFirstChild("Revolver")
+                if bpGun then
+                    local hum = GetBotHumanoid()
+                    if hum then hum:EquipTool(bpGun) end
+                    task.wait(0.1)
+                    char = LocalPlayer.Character
+                    if char then gun = char:FindFirstChild("Gun") or char:FindFirstChild("Revolver") end
+                end
+            end
+            if not gun then return end
+            local targetHRP = GetHRP(actualTarget)
+            local botHRP = GetBotHRP()
+            if not targetHRP or not botHRP then return end
+            botHRP.CFrame = CFrame.new(botHRP.Position, targetHRP.Position)
+            local dist = (botHRP.Position - targetHRP.Position).Magnitude
+            if dist > 15 then
+                botHRP.CFrame = targetHRP.CFrame * CFrame.new(0, 0, 5)
+            end
+            pcall(function() gun:Activate() end)
+        end)
+    end)
+end
+
+local function StopAutoShoot()
+    IsAutoShoot = false
+    AutoShootTarget = nil
+    DisconnectSafe("AutoShoot")
+end
+
+local function StartAutoMurd(targetInput)
+    DisconnectSafe("AutoMurd")
+    IsAutoMurd = true
+    AutoMurdTarget = targetInput
+    ActiveConnections.AutoMurd = RunService.Heartbeat:Connect(function()
+        pcall(function()
+            if not IsAutoMurd then DisconnectSafe("AutoMurd") return end
+            local knife = nil
+            local char = LocalPlayer.Character
+            if char then knife = char:FindFirstChild("Knife") end
+            if not knife then
+                local bpKnife = LocalPlayer.Backpack:FindFirstChild("Knife")
+                if bpKnife then
+                    local hum = GetBotHumanoid()
+                    if hum then hum:EquipTool(bpKnife) end
+                    task.wait(0.1)
+                    char = LocalPlayer.Character
+                    if char then knife = char:FindFirstChild("Knife") end
+                end
+            end
+            if not knife then return end
+            local targets = {}
+            if type(AutoMurdTarget) == "string" then
+                local input = AutoMurdTarget:lower()
+                if input == "all" then
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if p ~= LocalPlayer and IsAlive(p) then table.insert(targets, p) end
+                    end
+                elseif input == "others" then
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        if p ~= LocalPlayer and IsAlive(p) then table.insert(targets, p) end
+                    end
+                elseif input == "sherif" or input == "sheriff" then
+                    local roles = GetMM2Roles()
+                    if roles.sheriff and IsAlive(roles.sheriff) then
+                        table.insert(targets, roles.sheriff)
+                    end
+                else
+                    if AutoMurdTarget and type(AutoMurdTarget) ~= "string" and AutoMurdTarget.Parent and IsAlive(AutoMurdTarget) then
+                        table.insert(targets, AutoMurdTarget)
+                    end
+                end
+            elseif AutoMurdTarget and AutoMurdTarget.Parent and IsAlive(AutoMurdTarget) then
+                table.insert(targets, AutoMurdTarget)
+            end
+            local botHRP = GetBotHRP()
+            if not botHRP then return end
+            for _, t in ipairs(targets) do
+                local tHRP = GetHRP(t)
+                if tHRP then
+                    botHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, -2)
+                    pcall(function() knife:Activate() end)
+                    task.wait(0.05)
+                end
+            end
+        end)
+    end)
+end
+
+local function StopAutoMurd()
+    IsAutoMurd = false
+    AutoMurdTarget = nil
+    DisconnectSafe("AutoMurd")
+end
+
 local function StartXRay()
     XRayParts = {}
     pcall(function()
@@ -1587,46 +2214,6 @@ local function StopXRay()
     XRayParts = {}
 end
 
--- Coin farm — continuous teleport-collect loop
-local function StartCoinFarm()
-    DisconnectSafe("CoinFarm")
-    IsCoinFarming = true
-    task.spawn(function()
-        while IsCoinFarming do
-            pcall(function()
-                local coins = FindMM2Coins()
-                local botHRP = GetBotHRP()
-                if not botHRP then return end
-                for _, coin in ipairs(coins) do
-                    if not IsCoinFarming then break end
-                    if coin and coin.Parent then
-                        botHRP.CFrame = coin.CFrame
-                        if ExecutorInfo.HasFireTouchInterest then
-                            local ti = coin:FindFirstChild("TouchInterest")
-                            if ti then
-                                firetouchinterest(botHRP, coin, 0)
-                                task.wait(0.05)
-                                firetouchinterest(botHRP, coin, 1)
-                            end
-                        end
-                        task.wait(0.1)
-                    end
-                end
-            end)
-            task.wait(1)
-        end
-    end)
-    ActiveConnections.CoinFarm = RunService.Heartbeat:Connect(function()
-        if not IsCoinFarming then DisconnectSafe("CoinFarm") end
-    end)
-end
-
-local function StopCoinFarm()
-    IsCoinFarming = false
-    DisconnectSafe("CoinFarm")
-end
-
--- Generic farm — collects all TouchInterest parts in workspace
 local function StartFarm()
     DisconnectSafe("Farm")
     IsFarming = true
@@ -1647,15 +2234,15 @@ local function StartFarm()
                             botHRP.CFrame = obj.CFrame
                             if ExecutorInfo.HasFireTouchInterest then
                                 firetouchinterest(botHRP, obj, 0)
-                                task.wait(0.05)
+                                task.wait(0.03)
                                 firetouchinterest(botHRP, obj, 1)
                             end
-                            task.wait(0.1)
+                            task.wait(0.05)
                         end
                     end
                 end
             end)
-            task.wait(2)
+            task.wait(1)
         end
     end)
     ActiveConnections.Farm = RunService.Heartbeat:Connect(function()
@@ -1667,9 +2254,6 @@ local function StopFarm()
     IsFarming = false
     DisconnectSafe("Farm")
 end
-
--- Troll commands — seizure, launch, yeet, tornado, blackhole, scatter, cage, trap, spam, strobe,
--- scale, headless, creep, mimic, stack, flingall, loopflingall, godknife, dance, trail
 
 local function StartSeizure(target)
     DisconnectSafe("Seizure")
@@ -1697,80 +2281,6 @@ local function StartSeizure(target)
     end)
 end
 
--- Launch — flings target straight upward with massive force
-local function LaunchPlayer(target)
-    task.spawn(function()
-        ExecuteDirectionalFling(target, Vector3.new(0, 1, 0), FlingPower * 2, 40)
-    end)
-end
-
--- Yeet v2 — fixed: positions bot BELOW target and applies upward diagonal force
--- Reduced to 35 max attempts for near-instantaneous yeeting with zero delay
-local function YeetPlayer(target)
-    task.spawn(function()
-        local waitStart = tick()
-        while IsFlingBusy do
-            task.wait(0.1)
-            if tick() - waitStart > 15 then return end
-        end
-        IsFlingBusy = true
-
-        pcall(function()
-            if not target or not target.Parent or not IsAlive(target) then IsFlingBusy = false return end
-            local targetHRP = GetHRP(target)
-            local botHRP = GetBotHRP()
-            local botHum = GetBotHumanoid()
-            if not targetHRP or not botHRP or not botHum then IsFlingBusy = false return end
-
-            local savedPos = botHRP.CFrame
-            botHum:ChangeState(Enum.HumanoidStateType.Physics)
-
-            -- Upward + forward diagonal vector for maximum yeet distance
-            local lookDir = targetHRP.CFrame.LookVector
-            local yeetDir = (Vector3.new(lookDir.X, 2, lookDir.Z)).Unit
-
-            local bv = Instance.new("BodyVelocity")
-            bv.Velocity = yeetDir * FlingPower * 2
-            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-            bv.P = 9999
-            bv.Parent = botHRP
-
-            local bav = Instance.new("BodyAngularVelocity")
-            bav.AngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower)
-            bav.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-            bav.P = 9999
-            bav.Parent = botHRP
-
-            -- Position bot below target for upward launch physics
-            for i = 1, 35 do
-                if not target or not target.Parent then break end
-                if not IsAlive(target) then break end
-                local tHRP = GetHRP(target)
-                if not tHRP then break end
-                local cBotHRP = GetBotHRP()
-                if not cBotHRP then break end
-                -- Place bot directly under target's bounding box for upward energy transfer
-                cBotHRP.CFrame = CFrame.new(tHRP.Position.X, tHRP.Position.Y - 3, tHRP.Position.Z)
-                RunService.Heartbeat:Wait()
-            end
-
-            pcall(function() bv:Destroy() end)
-            pcall(function() bav:Destroy() end)
-
-            local resetHRP = GetBotHRP()
-            if resetHRP then
-                resetHRP.CFrame = savedPos
-                resetHRP.AssemblyLinearVelocity = Vector3.zero
-                resetHRP.AssemblyAngularVelocity = Vector3.zero
-            end
-            local resetHum = GetBotHumanoid()
-            if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
-        end)
-
-        IsFlingBusy = false
-    end)
-end
-
 local function StartTornado(target)
     DisconnectSafe("Tornado")
     DisconnectSafe("Follow")
@@ -1793,7 +2303,7 @@ local function StartTornado(target)
                 local y = math.sin(angle * 2) * 3
                 botHRP.CFrame = CFrame.new(targetHRP.Position + Vector3.new(x, y + 2, z), targetHRP.Position)
                 local now = tick()
-                if (now - lastFlingTime) > 1.5 then
+                if (now - lastFlingTime) > 1.0 then
                     lastFlingTime = now
                     if botHum then botHum:ChangeState(Enum.HumanoidStateType.Physics) end
                     botHRP.CFrame = targetHRP.CFrame
@@ -1802,7 +2312,7 @@ local function StartTornado(target)
                         math.random(-FlingPower, FlingPower),
                         math.random(-FlingPower, FlingPower)
                     )
-                    task.delay(0.1, function()
+                    task.delay(0.05, function()
                         local rHum = GetBotHumanoid()
                         if rHum then rHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
                     end)
@@ -1850,16 +2360,47 @@ local function StopBlackHole()
     IsBlackHole = false
 end
 
+local function StartMagnet()
+    DisconnectSafe("Magnet")
+    IsMagnetOn = true
+    ActiveConnections.Magnet = RunService.Heartbeat:Connect(function()
+        pcall(function()
+            if not IsMagnetOn then DisconnectSafe("Magnet") return end
+            local botHRP = GetBotHRP()
+            local botHum = GetBotHumanoid()
+            if not botHRP or not botHum then return end
+            local savedPos = botHRP.CFrame
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and IsAlive(p) then
+                    local tHRP = GetHRP(p)
+                    if tHRP then
+                        botHum:ChangeState(Enum.HumanoidStateType.Physics)
+                        botHRP.CFrame = tHRP.CFrame
+                        RunService.Heartbeat:Wait()
+                        botHRP = GetBotHRP()
+                        if botHRP then botHRP.CFrame = savedPos end
+                        botHum = GetBotHumanoid()
+                        if botHum then botHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+local function StopMagnet()
+    DisconnectSafe("Magnet")
+    IsMagnetOn = false
+end
+
 local function ScatterAll()
     task.spawn(function()
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer and IsAlive(p) then
                 local dir = Vector3.new(math.random(-1, 1), math.random(0, 1), math.random(-1, 1))
                 if dir.Magnitude > 0 then dir = dir.Unit end
-                task.spawn(function()
-                    ExecuteDirectionalFling(p, dir, FlingPower, 40)
-                end)
-                task.wait(0.3)
+                task.spawn(function() ExecuteSmartFling(p) end)
+                task.wait(0.2)
             end
         end
     end)
@@ -1907,18 +2448,18 @@ local function TrapPlayer(target)
     task.spawn(function()
         for i = 1, 5 do
             if not target or not target.Parent then break end
-            ExecuteDirectionalFling(target, Vector3.new(0, -1, 0), FlingPower, 40)
-            task.wait(0.3)
+            task.spawn(function() ExecuteSmartFling(target) end)
+            task.wait(0.2)
         end
     end)
 end
 
 local function SpamChat(message, count)
-    count = math.min(count or 10, 20)
+    count = math.min(count or 10, 30)
     task.spawn(function()
         for i = 1, count do
             pcall(function() SendChatMessage(BypassText(message)) end)
-            task.wait(ChatRateLimit + 0.1)
+            task.wait(ChatRateLimit + 0.05)
         end
     end)
 end
@@ -1973,7 +2514,8 @@ local function ScaleCharacter(scale)
             "LeftUpperArm", "LeftLowerArm", "LeftHand",
             "RightUpperArm", "RightLowerArm", "RightHand",
             "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
-            "RightUpperLeg", "RightLowerLeg", "RightFoot"}) do
+            "RightUpperLeg", "RightLowerLeg", "RightFoot",
+            "Left Arm", "Right Arm", "Left Leg", "Right Leg"}) do
             local part = char:FindFirstChild(partName)
             if part and part:IsA("BasePart") then
                 part.Size = part.Size * scale
@@ -2059,13 +2601,12 @@ local function StackOnPlayer(target)
     end
 end
 
--- FlingAll — sequential processing through mutex to prevent collateral damage
 local function FlingAllPlayers()
     task.spawn(function()
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer and IsAlive(p) then
-                ExecutePhysicalFling(p) -- mutex inside handles sequential execution
-                task.wait(0.1)
+                ExecuteSmartFling(p)
+                task.wait(0.05)
             end
         end
     end)
@@ -2083,7 +2624,7 @@ local function StartLoopFlingAll()
         pcall(function()
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and IsAlive(p) and GetHRP(p) then
-                    task.spawn(function() ExecutePhysicalFling(p) end)
+                    task.spawn(function() ExecuteSmartFling(p) end)
                 end
             end
         end)
@@ -2129,7 +2670,7 @@ local function StartTrail()
     local lastTrailTime = 0
     ActiveConnections.Trail = RunService.Heartbeat:Connect(function()
         local now = tick()
-        if (now - lastTrailTime) < 0.15 then return end
+        if (now - lastTrailTime) < 0.1 then return end
         lastTrailTime = now
         pcall(function()
             local hrp = GetBotHRP()
@@ -2147,7 +2688,7 @@ local function StartTrail()
             table.insert(TrailParts, trailPart)
             task.spawn(function()
                 for i = 0, 10 do
-                    task.wait(0.3)
+                    task.wait(0.2)
                     pcall(function() trailPart.Transparency = i / 10 end)
                 end
                 pcall(function() trailPart:Destroy() end)
@@ -2191,19 +2732,17 @@ local function StopDance()
     DisconnectSafe("Dance")
 end
 
--- New command: Aura — spawns orbiting neon particles around the bot
 local function StartAura()
     DisconnectSafe("Aura")
     IsAuraActive = true
     for _, p in ipairs(AuraParts) do pcall(function() p:Destroy() end) end
     AuraParts = {}
-    -- Create 6 orbiting neon spheres
-    for i = 1, 6 do
+    for i = 1, 8 do
         local ball = Instance.new("Part")
         ball.Shape = Enum.PartType.Ball
         ball.Size = Vector3.new(0.8, 0.8, 0.8)
         ball.Material = Enum.Material.Neon
-        ball.Color = Color3.fromHSV(i / 6, 1, 1)
+        ball.Color = Color3.fromHSV(i / 8, 1, 1)
         ball.Anchored = true
         ball.CanCollide = false
         ball.Transparency = 0.2
@@ -2217,7 +2756,7 @@ local function StartAura()
             if not IsAuraActive then DisconnectSafe("Aura") return end
             local hrp = GetBotHRP()
             if not hrp then return end
-            auraAngle = auraAngle + dt * 4
+            auraAngle = auraAngle + dt * 5
             for idx, ball in ipairs(AuraParts) do
                 if ball and ball.Parent then
                     local offset = (idx - 1) * (math.pi * 2 / #AuraParts)
@@ -2240,7 +2779,6 @@ local function StopAura()
     AuraParts = {}
 end
 
--- New command: Track — monitors target position and notifies on significant movement
 local function StartTrack(target)
     DisconnectSafe("Track")
     IsTracking = true
@@ -2275,7 +2813,110 @@ local function StopTrack()
     DisconnectSafe("Track")
 end
 
--- Utility functions
+local function StartLoopTP(target)
+    DisconnectSafe("LoopTP")
+    IsLoopTP = true
+    LoopTPTarget = target
+    ActiveConnections.LoopTP = RunService.Heartbeat:Connect(function()
+        pcall(function()
+            if not IsLoopTP or not LoopTPTarget or not LoopTPTarget.Parent then
+                DisconnectSafe("LoopTP")
+                IsLoopTP = false
+                return
+            end
+            local tHRP = GetHRP(LoopTPTarget)
+            local botHRP = GetBotHRP()
+            if tHRP and botHRP then
+                botHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, 3)
+            end
+        end)
+    end)
+end
+
+local function StopLoopTP()
+    IsLoopTP = false
+    LoopTPTarget = nil
+    DisconnectSafe("LoopTP")
+end
+
+local function StartWallBang()
+    DisconnectSafe("WallBang")
+    IsWallBang = true
+    ActiveConnections.WallBang = RunService.Heartbeat:Connect(function()
+        pcall(function()
+            if not IsWallBang then DisconnectSafe("WallBang") return end
+            local char = LocalPlayer.Character
+            if not char then return end
+            local knife = char:FindFirstChild("Knife")
+            local gun = char:FindFirstChild("Gun") or char:FindFirstChild("Revolver")
+            local weapon = knife or gun
+            if weapon then
+                pcall(function() weapon:Activate() end)
+            end
+        end)
+    end)
+end
+
+local function StopWallBang()
+    IsWallBang = false
+    DisconnectSafe("WallBang")
+end
+
+local function AutoReport(target, count)
+    if not target then return end
+    count = math.min(count or 10, 50)
+    task.spawn(function()
+        local reasons = {
+            "Exploiting", "Cheating", "Harassment", "Inappropriate Content",
+            "Scamming", "Bullying", "Hacking", "Glitching",
+        }
+        for i = 1, count do
+            pcall(function()
+                local reason = reasons[(i % #reasons) + 1]
+                Players:ReportAbuse(target, reason)
+            end)
+            task.wait(0.1)
+        end
+    end)
+end
+
+local function CrashPlayer(target)
+    if not target then return end
+    task.spawn(function()
+        pcall(function()
+            for i = 1, 50 do
+                if not target or not target.Parent then break end
+                local tHRP = GetHRP(target)
+                local botHRP = GetBotHRP()
+                local botHum = GetBotHumanoid()
+                if not tHRP or not botHRP or not botHum then break end
+                botHum:ChangeState(Enum.HumanoidStateType.Physics)
+                botHRP.CFrame = tHRP.CFrame
+                botHRP.AssemblyLinearVelocity = Vector3.new(
+                    math.random(-FlingPower, FlingPower),
+                    math.random(-FlingPower, FlingPower),
+                    math.random(-FlingPower, FlingPower)
+                )
+                botHRP.AssemblyAngularVelocity = Vector3.new(
+                    math.random(-FlingPower, FlingPower),
+                    math.random(-FlingPower, FlingPower),
+                    math.random(-FlingPower, FlingPower)
+                )
+                RunService.Heartbeat:Wait()
+            end
+            local resetHum = GetBotHumanoid()
+            if resetHum then resetHum:ChangeState(Enum.HumanoidStateType.GettingUp) end
+        end)
+    end)
+end
+
+local function RagdollPlayer(target)
+    if not target then return end
+    task.spawn(function()
+        ExecuteSmartFling(target)
+    end)
+end
+
 local function GiveBTools()
     pcall(function()
         local deleteTool = Instance.new("Tool")
@@ -2344,17 +2985,69 @@ local function FormatTime(seconds)
     return string.format("%02d:%02d:%02d", hours, mins, secs)
 end
 
--- Dual-prefix detection with chat tag stripping
--- Strips common badge/VIP/system prefixes like [VIP], {Admin}, (Mod) before checking
--- Uses %s+ tokenization to handle extra whitespace and typos
+local TypoCorrections = {
+    flig = "fling", flimg = "fling", filng = "fling", flng = "fling",
+    yeet = "yeet", yeet = "yeet", yeeet = "yeet", yet = "yeet",
+    kil = "kill", killl = "kill",
+    tp2m = "tp2me", tp2mee = "tp2me",
+    shoo = "shoot", sho = "shoot", schoot = "shoot",
+    murd = "murd", murdr = "murd", murder = "murd", murde = "murd",
+    folw = "follow", follw = "follow",
+    orbt = "orbit",
+    sezure = "seizure", seizur = "seizure",
+    torndo = "tornado", tornad = "tornado",
+    blckhole = "blackhole", blkhole = "blackhole",
+    scater = "scatter", scattr = "scatter",
+    cag = "cage",
+    trp = "trap",
+    spm = "spam",
+    strb = "strobe",
+    gient = "giant", gint = "giant",
+    tny = "tiny",
+    creap = "creep", crep = "creep",
+    mimik = "mimic", mimck = "mimic",
+    stck = "stack",
+    flngall = "flingall",
+    resp = "respawn", rspwn = "respawn",
+    refr = "refresh", refrsh = "refresh",
+    freze = "freeze", freez = "freeze",
+    unfreze = "unfreeze",
+    invs = "invis", invisble = "invisible",
+    visibl = "visible",
+    nclip = "noclip",
+    hlp = "help", hep = "help",
+    cmd = "cmds", comands = "commands",
+    gd = "god", ugod = "ungod",
+    spd = "speed",
+    jmp = "jump",
+    hl = "highlight", unehl = "unhighlight",
+    vew = "view", spectat = "spectate",
+    rprt = "report", reprt = "report",
+    rport = "report",
+    magnt = "magnet",
+    roket = "rocket", rcket = "rocket",
+    pul = "pull",
+    crsh = "crash",
+    ragdol = "ragdoll", ragdl = "ragdoll",
+    wallbng = "wallbang", wlbang = "wallbang",
+    antiflng = "antifling",
+    antislw = "antislow",
+    autoshoot = "shoot",
+    automurd = "murd",
+    infojump = "infjump",
+    loopteleport = "looptp",
+}
+
+local function CorrectTypo(cmd)
+    return TypoCorrections[cmd] or cmd
+end
+
 local function StripChatTags(message)
     if not message then return "" end
     local stripped = message
-    -- Remove bracket-style tags at the start: [VIP], {Admin}, (Mod), etc.
     stripped = stripped:gsub("^%s*%[.-%]%s*", "")
     stripped = stripped:gsub("^%s*%{.-%}%s*", "")
     stripped = stripped:gsub("^%s*%(.-%)%s*", "")
-    -- Trim leading/trailing whitespace
     stripped = stripped:match("^%s*(.-)%s*$") or stripped
     return stripped
 end
@@ -2371,56 +3064,36 @@ local function FindPrefix(message)
     return nil, nil
 end
 
--- Command router — central processing with dual prefix, chat tag stripping,
--- full validation, permissions, cooldowns, and human-like responses
 local function HandleBotCommand(message, executorPlayer, isWhisper)
     if not message or not executorPlayer then return end
     if typeof(message) ~= "string" then return end
-
-    -- Dual prefix detection with chat tag stripping
     local matchedPrefix, cleanedMessage = FindPrefix(message)
     if not matchedPrefix then return end
-
-    -- Access control
     if not CanUseBot(executorPlayer) then return end
     local permLevel = GetPermLevel(executorPlayer)
     if permLevel < 1 then return end
     if IsOnCooldown(executorPlayer) then return end
-
-    -- Parse command and arguments from cleaned message (tags already stripped)
     local cleanString = cleanedMessage:sub(#matchedPrefix + 1)
     if not cleanString or cleanString == "" then return end
-
-    -- Smart tokenization: collapse multiple spaces, trim
     cleanString = cleanString:match("^%s*(.-)%s*$") or cleanString
     local args = {}
     for token in cleanString:gmatch("%S+") do
         table.insert(args, token)
     end
     if not args[1] or args[1] == "" then return end
-
-    local cmd = args[1]:lower()
-
-    -- Permission check for the specific command
+    local cmd = CorrectTypo(args[1]:lower())
     if not HasPermission(executorPlayer, cmd) then
         RespondError("no perms for " .. cmd, isWhisper and executorPlayer)
         return
     end
-
-    -- Build rest-of-args string
     local restArgs = ""
     if #args > 1 then
         local parts = {}
         for i = 2, #args do table.insert(parts, args[i]) end
         restArgs = table.concat(parts, " ")
     end
-
     LogCommand(executorPlayer.Name, cmd, args[2])
-
-    -- Whisper target for responses
     local wt = isWhisper and executorPlayer or nil
-
-    -- MOVEMENT COMMANDS
 
     if cmd == "tp" then
         if not args[2] then RespondError("need a target", wt) return end
@@ -2441,7 +3114,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if #targets == 0 then RespondError("cant find " .. args[2], wt) return end
         for _, target in ipairs(targets) do
             BringPlayer(target)
-            task.wait(0.1)
+            task.wait(0.05)
         end
         Respond("bringing", wt)
 
@@ -2462,12 +3135,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         if not target then RespondError("cant find " .. args[2], wt) return end
-        DisconnectSafe("Follow")
-        DisconnectSafe("Orbit")
-        DisconnectSafe("Attach")
-        DisconnectSafe("Annoy")
-        DisconnectSafe("Creep")
-        DisconnectSafe("Mimic")
+        DisconnectSafe("Follow"); DisconnectSafe("Orbit"); DisconnectSafe("Attach"); DisconnectSafe("Annoy"); DisconnectSafe("Creep"); DisconnectSafe("Mimic")
         ActiveConnections.Follow = RunService.Heartbeat:Connect(function()
             pcall(function()
                 local targetHRP = GetHRP(target)
@@ -2489,12 +3157,8 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         if not target then RespondError("cant find " .. args[2], wt) return end
-        DisconnectSafe("Follow")
-        DisconnectSafe("Orbit")
-        DisconnectSafe("Attach")
-        DisconnectSafe("Annoy")
-        DisconnectSafe("Creep")
-        DisconnectSafe("Mimic")
+        local customRadius = tonumber(args[3]) or OrbitRadius
+        DisconnectSafe("Follow"); DisconnectSafe("Orbit"); DisconnectSafe("Attach"); DisconnectSafe("Annoy"); DisconnectSafe("Creep"); DisconnectSafe("Mimic")
         local angle = 0
         ActiveConnections.Orbit = RunService.Heartbeat:Connect(function(dt)
             pcall(function()
@@ -2502,8 +3166,8 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
                 local botHRP = GetBotHRP()
                 if targetHRP and botHRP and target and target.Parent and IsAlive(target) then
                     angle = angle + (dt * OrbitSpeed)
-                    local x = math.cos(angle) * OrbitRadius
-                    local z = math.sin(angle) * OrbitRadius
+                    local x = math.cos(angle) * customRadius
+                    local z = math.sin(angle) * customRadius
                     botHRP.CFrame = CFrame.new(targetHRP.Position + Vector3.new(x, 2, z), targetHRP.Position)
                 else
                     DisconnectSafe("Orbit")
@@ -2516,12 +3180,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         if not target then RespondError("cant find " .. args[2], wt) return end
-        DisconnectSafe("Follow")
-        DisconnectSafe("Orbit")
-        DisconnectSafe("Attach")
-        DisconnectSafe("Annoy")
-        DisconnectSafe("Creep")
-        DisconnectSafe("Mimic")
+        DisconnectSafe("Follow"); DisconnectSafe("Orbit"); DisconnectSafe("Attach"); DisconnectSafe("Annoy"); DisconnectSafe("Creep"); DisconnectSafe("Mimic")
         ActiveConnections.Attach = RunService.Heartbeat:Connect(function()
             pcall(function()
                 local targetHRP = GetHRP(target)
@@ -2548,40 +3207,66 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         local z = tonumber(args[4])
         if not x or not y or not z then RespondError("need x y z coords", wt) return end
         local botHRP = GetBotHRP()
-        if botHRP then
-            botHRP.CFrame = CFrame.new(x, y, z)
-            Respond("tp'd to coords", wt)
+        if botHRP then botHRP.CFrame = CFrame.new(x, y, z); Respond("tp'd to coords", wt) end
+
+    elseif cmd == "tpbehind" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local target = GetSmartTarget(args[2], executorPlayer)
+        if not target then RespondError("cant find " .. args[2], wt) return end
+        local tHRP = GetHRP(target)
+        local botHRP = GetBotHRP()
+        if tHRP and botHRP then
+            botHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, 5)
+            Respond("tp'd behind " .. target.Name, wt)
         end
 
-    -- FLING COMMANDS
+    elseif cmd == "looptp" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local target = GetSmartTarget(args[2], executorPlayer)
+        if not target then RespondError("cant find " .. args[2], wt) return end
+        StartLoopTP(target)
+        Respond("looptp on " .. target.Name, wt)
+
+    elseif cmd == "unlooptp" then
+        StopLoopTP()
+        Respond("looptp off", wt)
 
     elseif cmd == "fling" then
         if not args[2] then RespondError("need a target", wt) return end
         local targets = GetMultipleTargets(args[2], executorPlayer)
         if #targets == 0 then RespondError("cant find " .. args[2], wt) return end
-        -- Sequential fling via mutex — prevents collateral multi-target hits
         task.spawn(function()
             for _, target in ipairs(targets) do
-                ExecutePhysicalFling(target)
-                task.wait(0.1)
+                ExecuteSmartFling(target)
+                task.wait(0.05)
             end
         end)
         Respond("flinging", wt)
+
+    elseif cmd == "kill" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local targets = GetMultipleTargets(args[2], executorPlayer)
+        if #targets == 0 then RespondError("cant find " .. args[2], wt) return end
+        task.spawn(function()
+            for _, target in ipairs(targets) do
+                ExecuteSmartFling(target)
+                task.wait(0.05)
+            end
+        end)
+        Respond("killing", wt)
 
     elseif cmd == "loopfling" then
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         if not target then RespondError("cant find " .. args[2], wt) return end
-        DisconnectSafe("LoopFling")
-        DisconnectSafe("LoopKill")
-        DisconnectSafe("LoopFlingAll")
+        DisconnectSafe("LoopFling"); DisconnectSafe("LoopKill"); DisconnectSafe("LoopFlingAll")
         local lastFlingTime = 0
         ActiveConnections.LoopFling = RunService.Heartbeat:Connect(function()
             local now = tick()
             if (now - lastFlingTime) < LoopFlingDelay then return end
             lastFlingTime = now
             if target and target.Parent and IsAlive(target) and GetHRP(target) then
-                task.spawn(function() ExecutePhysicalFling(target) end)
+                task.spawn(function() ExecuteSmartFling(target) end)
             elseif not target or not target.Parent then
                 DisconnectSafe("LoopFling")
             end
@@ -2592,21 +3277,16 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         if not target then RespondError("cant find " .. args[2], wt) return end
-        DisconnectSafe("LoopFling")
-        DisconnectSafe("LoopKill")
-        DisconnectSafe("LoopFlingAll")
+        DisconnectSafe("LoopFling"); DisconnectSafe("LoopKill"); DisconnectSafe("LoopFlingAll")
         local lastFlingTime = 0
         ActiveConnections.LoopKill = RunService.Heartbeat:Connect(function()
             local now = tick()
             if (now - lastFlingTime) < LoopFlingDelay then return end
             lastFlingTime = now
             pcall(function()
-                if not target or not target.Parent then
-                    DisconnectSafe("LoopKill")
-                    return
-                end
+                if not target or not target.Parent then DisconnectSafe("LoopKill") return end
                 if IsAlive(target) and GetHRP(target) then
-                    task.spawn(function() ExecutePhysicalFling(target) end)
+                    task.spawn(function() ExecuteSmartFling(target) end)
                 end
             end)
         end)
@@ -2620,7 +3300,14 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         StartLoopFlingAll()
         Respond("loopfling all on", wt)
 
-    -- CHARACTER COMMANDS
+    elseif cmd == "flingmethod" then
+        local method = tonumber(args[2]) or 0
+        if method < 0 or method > #FlingMethods then
+            Respond("methods: 0=auto 1=slam 2=multiangle 3=burst 4=collision 5=seat", wt)
+        else
+            PreferredFlingMethod = method
+            Respond("fling method set to " .. (method == 0 and "auto" or tostring(method)), wt)
+        end
 
     elseif cmd == "speed" then
         local value = tonumber(args[2])
@@ -2652,14 +3339,10 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
 
     elseif cmd == "fly" then
         local target = nil
-        if args[2] then
-            target = GetSmartTarget(args[2], executorPlayer)
-        else
-            target = executorPlayer
-        end
+        if args[2] then target = GetSmartTarget(args[2], executorPlayer) else target = executorPlayer end
         if not target then RespondError("cant find target", wt) return end
         StartFloorFly(target)
-        Respond("floor fly on " .. target.Name .. " - spam jump to go up", wt)
+        Respond("floor fly on " .. target.Name, wt)
 
     elseif cmd == "unfly" then
         StopFloorFly()
@@ -2690,27 +3373,31 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
 
     elseif cmd == "freeze" then
         if not args[2] then
-            FreezePlayer(LocalPlayer)
+            FreezePlayerAdvanced(LocalPlayer)
         else
-            local target = GetSmartTarget(args[2], executorPlayer)
-            if not target then RespondError("cant find " .. args[2], wt) return end
-            FreezePlayer(target)
+            local targets = GetMultipleTargets(args[2], executorPlayer)
+            if #targets == 0 then RespondError("cant find " .. args[2], wt) return end
+            for _, target in ipairs(targets) do
+                FreezePlayerAdvanced(target)
+            end
         end
         Respond("frozen", wt)
 
     elseif cmd == "unfreeze" then
         if not args[2] then
-            UnfreezePlayer(LocalPlayer)
+            UnfreezePlayerAdvanced(LocalPlayer)
         else
-            local target = GetSmartTarget(args[2], executorPlayer)
-            if not target then RespondError("cant find " .. args[2], wt) return end
-            UnfreezePlayer(target)
+            local targets = GetMultipleTargets(args[2], executorPlayer)
+            if #targets == 0 then RespondError("cant find " .. args[2], wt) return end
+            for _, target in ipairs(targets) do
+                UnfreezePlayerAdvanced(target)
+            end
         end
         Respond("unfrozen", wt)
 
-    elseif cmd == "god" then
+    elseif cmd == "god" or cmd == "antikill" then
         StartGodMode()
-        Respond("god on", wt)
+        Respond("god on (7 layers)", wt)
 
     elseif cmd == "ungod" then
         StopGodMode()
@@ -2735,8 +3422,6 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         DisconnectSafe("Stare")
         Respond("stare off", wt)
 
-    -- ESP / VISUAL COMMANDS
-
     elseif cmd == "esp" then
         StartESP()
         Respond("esp on", wt)
@@ -2759,10 +3444,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
             Respond("all highlights removed", wt)
         else
             local target = GetSmartTarget(args[2], executorPlayer)
-            if target then
-                RemoveESPForPlayer(target)
-                Respond("unhighlighted " .. target.Name, wt)
-            end
+            if target then RemoveESPForPlayer(target); Respond("unhighlighted " .. target.Name, wt) end
         end
 
     elseif cmd == "view" or cmd == "spectate" then
@@ -2776,11 +3458,25 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         UnviewPlayer()
         Respond("camera reset", wt)
 
-    -- SAFETY / UTILITY COMMANDS
-
     elseif cmd == "antivoid" then
         ToggleAntiVoid(not IsAntiVoid)
         Respond("antivoid " .. (IsAntiVoid and "on" or "off"), wt)
+
+    elseif cmd == "antifling" then
+        ToggleAntiFling(true)
+        Respond("antifling on", wt)
+
+    elseif cmd == "unantifling" then
+        ToggleAntiFling(false)
+        Respond("antifling off", wt)
+
+    elseif cmd == "antislow" then
+        ToggleAntiSlow(true)
+        Respond("antislow on", wt)
+
+    elseif cmd == "unantislow" then
+        ToggleAntiSlow(false)
+        Respond("antislow off", wt)
 
     elseif cmd == "infjump" then
         ToggleInfJump(not IsInfJump)
@@ -2815,13 +3511,35 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         local ageDays = target.AccountAge
         local years = math.floor(ageDays / 365)
         local days = ageDays % 365
-        Respond(target.Name .. " account age: " .. years .. "y " .. days .. "d", wt)
+        Respond(target.Name .. " age: " .. years .. "y " .. days .. "d", wt)
+
+    elseif cmd == "info" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local target = GetSmartTarget(args[2], executorPlayer)
+        if not target then RespondError("cant find " .. args[2], wt) return end
+        local ageDays = target.AccountAge
+        local years = math.floor(ageDays / 365)
+        local days = ageDays % 365
+        Respond(target.DisplayName .. " (@" .. target.Name .. ") ID:" .. target.UserId .. " Age:" .. years .. "y" .. days .. "d", wt)
+
+    elseif cmd == "serverage" then
+        local total = 0
+        local count = 0
+        for _, p in ipairs(Players:GetPlayers()) do
+            total = total + p.AccountAge
+            count = count + 1
+        end
+        if count > 0 then
+            local avg = math.floor(total / count)
+            Respond("avg account age: " .. math.floor(avg / 365) .. "y " .. (avg % 365) .. "d", wt)
+        end
 
     elseif cmd == "status" then
-        local statusMsg = "up: " .. FormatTime(tick() - BotStartTime)
-            .. " | noclip: " .. (IsNoClip and "on" or "off")
-            .. " | god: " .. (IsGodMode and "on" or "off")
-            .. " | mode: " .. BotMode
+        local statusMsg = "up:" .. FormatTime(tick() - BotStartTime)
+            .. " noclip:" .. (IsNoClip and "Y" or "N")
+            .. " god:" .. (IsGodMode and "Y" or "N")
+            .. " mode:" .. BotMode
+            .. " fling:" .. (PreferredFlingMethod == 0 and "auto" or tostring(PreferredFlingMethod))
         Respond(statusMsg, wt)
 
     elseif cmd == "copyname" then
@@ -2835,7 +3553,17 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
             Respond(target.Name .. " (clipboard not available)", wt)
         end
 
-    -- MM2 COMMANDS
+    elseif cmd == "say" then
+        if restArgs == "" then RespondError("need a message", wt) return end
+        pcall(function() SendChatMessage(BypassText(restArgs)) end)
+
+    elseif cmd == "report" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local target = GetSmartTarget(args[2], executorPlayer)
+        if not target then RespondError("cant find " .. args[2], wt) return end
+        local count = tonumber(args[3]) or 20
+        AutoReport(target, count)
+        Respond("reporting " .. target.Name .. " x" .. count, wt)
 
     elseif cmd == "grabknife" then
         GrabWeapon("Knife")
@@ -2849,9 +3577,41 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         local roles = GetMM2Roles()
         local murdName = roles.murderer and roles.murderer.Name or "unknown"
         local sheriffName = roles.sheriff and roles.sheriff.Name or "unknown"
-        Respond("murd: " .. murdName, wt, true)
-        task.wait(ChatRateLimit + 0.2)
-        Respond("sherif: " .. sheriffName, wt, true)
+        Respond("murd: " .. murdName .. " | sherif: " .. sheriffName, wt, true)
+
+    elseif cmd == "shoot" then
+        if not args[2] then RespondError("need a target or murd", wt) return end
+        local targetInput = args[2]:lower()
+        if targetInput == "murd" or targetInput == "murderer" then
+            StartAutoShoot("murd")
+            Respond("auto shoot on murd", wt)
+        else
+            local target = GetSmartTarget(args[2], executorPlayer)
+            if not target then RespondError("cant find " .. args[2], wt) return end
+            StartAutoShoot(target)
+            Respond("auto shoot on " .. target.Name, wt)
+        end
+
+    elseif cmd == "unshoot" then
+        StopAutoShoot()
+        Respond("auto shoot off", wt)
+
+    elseif cmd == "murd" then
+        if not args[2] then RespondError("need target: player/all/others/sherif", wt) return end
+        local targetInput = args[2]:lower()
+        if targetInput == "all" or targetInput == "others" or targetInput == "sherif" or targetInput == "sheriff" then
+            StartAutoMurd(targetInput)
+            Respond("auto murd on " .. targetInput, wt)
+        else
+            local target = GetSmartTarget(args[2], executorPlayer)
+            if not target then RespondError("cant find " .. args[2], wt) return end
+            StartAutoMurd(target)
+            Respond("auto murd on " .. target.Name, wt)
+        end
+
+    elseif cmd == "unmurd" then
+        StopAutoMurd()
+        Respond("auto murd off", wt)
 
     elseif cmd == "cointp" then
         local coins = FindMM2Coins()
@@ -2861,28 +3621,20 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
                 task.spawn(function()
                     for _, coin in ipairs(coins) do
                         if coin and coin.Parent then
-                            botHRP.CFrame = coin.CFrame
-                            if ExecutorInfo.HasFireTouchInterest then
-                                local ti = coin:FindFirstChild("TouchInterest")
-                                if ti then
-                                    firetouchinterest(botHRP, coin, 0)
-                                    task.wait(0.05)
-                                    firetouchinterest(botHRP, coin, 1)
-                                end
-                            end
-                            task.wait(0.15)
+                            WalkToCoin(coin)
+                            task.wait(0.3)
                         end
                     end
                 end)
-                Respond("collecting " .. #coins .. " coins", wt)
+                Respond("walking to " .. #coins .. " coins", wt)
             end
         else
             RespondError("no coins found", wt)
         end
 
     elseif cmd == "coinfarm" then
-        StartCoinFarm()
-        Respond("coinfarm on", wt)
+        StartCoinFarmWalk()
+        Respond("coinfarm on (walk mode)", wt)
 
     elseif cmd == "uncoinfarm" then
         StopCoinFarm()
@@ -2890,10 +3642,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
 
     elseif cmd == "lobby" then
         local botHRP = GetBotHRP()
-        if botHRP then
-            botHRP.CFrame = CFrame.new(-109, 140, -12)
-            Respond("tp'd to lobby", wt)
-        end
+        if botHRP then botHRP.CFrame = CFrame.new(-109, 140, -12); Respond("tp'd to lobby", wt) end
 
     elseif cmd == "map" then
         local botHRP = GetBotHRP()
@@ -2904,10 +3653,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
                     local totalPos = Vector3.zero
                     local count = 0
                     for _, obj in ipairs(mapFolder:GetDescendants()) do
-                        if obj:IsA("BasePart") then
-                            totalPos = totalPos + obj.Position
-                            count = count + 1
-                        end
+                        if obj:IsA("BasePart") then totalPos = totalPos + obj.Position; count = count + 1 end
                     end
                     if count > 0 then
                         botHRP.CFrame = CFrame.new(totalPos / count + Vector3.new(0, 5, 0))
@@ -2939,7 +3685,13 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         StopGodKnife()
         Respond("godknife off", wt)
 
-    -- FARM COMMANDS
+    elseif cmd == "wallbang" then
+        StartWallBang()
+        Respond("wallbang on", wt)
+
+    elseif cmd == "unwallbang" then
+        StopWallBang()
+        Respond("wallbang off", wt)
 
     elseif cmd == "farm" then
         StartFarm()
@@ -2948,8 +3700,6 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
     elseif cmd == "unfarm" then
         StopFarm()
         Respond("farm off", wt)
-
-    -- TROLL COMMANDS
 
     elseif cmd == "seizure" then
         if not args[2] then RespondError("need a target", wt) return end
@@ -2972,6 +3722,22 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         YeetPlayer(target)
         Respond("yeeted " .. target.Name, wt)
 
+    elseif cmd == "rocket" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local target = GetSmartTarget(args[2], executorPlayer)
+        if not target then RespondError("cant find " .. args[2], wt) return end
+        RocketPlayer(target)
+        Respond("rocketed " .. target.Name, wt)
+
+    elseif cmd == "pull" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local targets = GetMultipleTargets(args[2], executorPlayer)
+        if #targets == 0 then RespondError("cant find " .. args[2], wt) return end
+        for _, target in ipairs(targets) do
+            PullPlayer(target)
+        end
+        Respond("pulling", wt)
+
     elseif cmd == "tornado" then
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
@@ -2986,6 +3752,14 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
     elseif cmd == "unblackhole" then
         StopBlackHole()
         Respond("blackhole off", wt)
+
+    elseif cmd == "magnet" then
+        StartMagnet()
+        Respond("magnet on", wt)
+
+    elseif cmd == "unmagnet" then
+        StopMagnet()
+        Respond("magnet off", wt)
 
     elseif cmd == "scatter" then
         ScatterAll()
@@ -3008,6 +3782,32 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not target then RespondError("cant find " .. args[2], wt) return end
         TrapPlayer(target)
         Respond("trapping " .. target.Name, wt)
+
+    elseif cmd == "crash" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local target = GetSmartTarget(args[2], executorPlayer)
+        if not target then RespondError("cant find " .. args[2], wt) return end
+        CrashPlayer(target)
+        Respond("crashing " .. target.Name, wt)
+
+    elseif cmd == "ragdoll" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local target = GetSmartTarget(args[2], executorPlayer)
+        if not target then RespondError("cant find " .. args[2], wt) return end
+        RagdollPlayer(target)
+        Respond("ragdolled " .. target.Name, wt)
+
+    elseif cmd == "tpall" then
+        local botHRP = GetBotHRP()
+        if not botHRP then return end
+        local dest = botHRP.CFrame
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and IsAlive(p) then
+                BringPlayer(p, dest)
+                task.wait(0.05)
+            end
+        end
+        Respond("bringing everyone", wt)
 
     elseif cmd == "spam" then
         if restArgs == "" then RespondError("need a message", wt) return end
@@ -3091,17 +3891,31 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         StopTrail()
         Respond("trail off", wt)
 
-    -- VISUAL / ENVIRONMENT COMMANDS
+    elseif cmd == "aura" then
+        StartAura()
+        Respond("aura on", wt)
+
+    elseif cmd == "unaura" then
+        StopAura()
+        Respond("aura off", wt)
+
+    elseif cmd == "track" then
+        if not args[2] then RespondError("need a target", wt) return end
+        local target = GetSmartTarget(args[2], executorPlayer)
+        if not target then RespondError("cant find " .. args[2], wt) return end
+        StartTrack(target)
+        Respond("tracking " .. target.Name, wt)
+
+    elseif cmd == "untrack" then
+        StopTrack()
+        Respond("tracking off", wt)
 
     elseif cmd == "btools" then
         GiveBTools()
         Respond("btools given", wt)
 
     elseif cmd == "fogoff" then
-        pcall(function()
-            Lighting.FogEnd = 9999999
-            Lighting.FogStart = 9999999
-        end)
+        pcall(function() Lighting.FogEnd = 9999999; Lighting.FogStart = 9999999 end)
         Respond("fog removed", wt)
 
     elseif cmd == "fullbright" then
@@ -3134,7 +3948,46 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
             end
         end)
 
-    -- CONTROL COMMANDS
+    elseif cmd == "emote" then
+        local emoteId = args[2]
+        if not emoteId then RespondError("need an emote id or name", wt) return end
+        local emoteMap = {
+            wave = "507770239", point = "507770453", dance = "507771019",
+            dance2 = "507776043", dance3 = "507777268", laugh = "507770818",
+            cheer = "507770677",
+        }
+        local animId = emoteMap[emoteId:lower()] or emoteId
+        pcall(function()
+            local hum = GetBotHumanoid()
+            if hum then
+                local anim = Instance.new("Animation")
+                anim.AnimationId = "rbxassetid://" .. animId
+                local track = hum:LoadAnimation(anim)
+                track:Play()
+                Respond("playing emote", wt)
+            end
+        end)
+
+    elseif cmd == "autorespawn" then
+        DisconnectSafe("AutoRespawn")
+        IsAutoRespawn = true
+        ActiveConnections.AutoRespawn = RunService.Heartbeat:Connect(function()
+            pcall(function()
+                if not IsAutoRespawn then DisconnectSafe("AutoRespawn") return end
+                if not IsBotAlive() then
+                    pcall(function()
+                        local char = LocalPlayer.Character
+                        if char then char:BreakJoints() end
+                    end)
+                end
+            end)
+        end)
+        Respond("autorespawn on", wt)
+
+    elseif cmd == "unautorespawn" then
+        IsAutoRespawn = false
+        DisconnectSafe("AutoRespawn")
+        Respond("autorespawn off", wt)
 
     elseif cmd == "rejoin" then
         RejoinServer()
@@ -3144,11 +3997,8 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         ServerHop()
         Respond("server hopping", wt)
 
-    -- PERMISSION COMMANDS (fixed: works 100%)
-
     elseif cmd == "perm" then
         if not args[2] then RespondError("need a player name", wt) return end
-        -- Support both in-game players and offline name strings
         local target = GetSmartTarget(args[2], executorPlayer)
         if target then
             local currentLevel = GetPermLevel(target)
@@ -3159,7 +4009,6 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
             PermittedUsers[target.Name:lower()] = 1
             Respond(target.Name .. " permed (user)", wt, true)
         else
-            -- Offline perm: store the name directly
             local nameKey = args[2]:lower()
             PermittedUsers[nameKey] = 1
             Respond(args[2] .. " permed (offline)", wt)
@@ -3169,15 +4018,9 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a player name", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         local nameKey = target and target.Name:lower() or args[2]:lower()
-        if nameKey == SuperOwner:lower() then
-            RespondError("cant unperm the super owner", wt)
-            return
-        end
+        if nameKey == SuperOwner:lower() then RespondError("cant unperm the super owner", wt) return end
         local targetLevel = PermittedUsers[nameKey] or 0
-        if targetLevel >= GetPermLevel(executorPlayer) then
-            RespondError("cant unperm someone same rank or higher", wt)
-            return
-        end
+        if targetLevel >= GetPermLevel(executorPlayer) then RespondError("cant unperm someone same rank or higher", wt) return end
         PermittedUsers[nameKey] = nil
         Respond((target and target.Name or args[2]) .. " unpermed", wt)
 
@@ -3185,10 +4028,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         local nameKey = target and target.Name:lower() or args[2]:lower()
-        if nameKey == SuperOwner:lower() then
-            RespondError("cant change super owner rank", wt)
-            return
-        end
+        if nameKey == SuperOwner:lower() then RespondError("cant change super owner rank", wt) return end
         PermittedUsers[nameKey] = 2
         Respond((target and target.Name or args[2]) .. " is now admin", wt, true)
 
@@ -3196,15 +4036,9 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         local nameKey = target and target.Name:lower() or args[2]:lower()
-        if nameKey == SuperOwner:lower() then
-            RespondError("cant demote super owner", wt)
-            return
-        end
+        if nameKey == SuperOwner:lower() then RespondError("cant demote super owner", wt) return end
         local targetLevel = PermittedUsers[nameKey] or 0
-        if targetLevel >= GetPermLevel(executorPlayer) then
-            RespondError("cant demote someone same rank or higher", wt)
-            return
-        end
+        if targetLevel >= GetPermLevel(executorPlayer) then RespondError("cant demote someone same rank or higher", wt) return end
         PermittedUsers[nameKey] = 1
         Respond((target and target.Name or args[2]) .. " demoted to user", wt)
 
@@ -3212,10 +4046,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         local nameKey = target and target.Name:lower() or args[2]:lower()
-        if nameKey == SuperOwner:lower() then
-            RespondError("cant change super owner rank", wt)
-            return
-        end
+        if nameKey == SuperOwner:lower() then RespondError("cant change super owner rank", wt) return end
         PermittedUsers[nameKey] = 3
         Respond((target and target.Name or args[2]) .. " is now owner", wt, true)
 
@@ -3223,14 +4054,9 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         local nameKey = target and target.Name:lower() or args[2]:lower()
-        if nameKey == SuperOwner:lower() then
-            RespondError("cant demote super owner", wt)
-            return
-        end
+        if nameKey == SuperOwner:lower() then RespondError("cant demote super owner", wt) return end
         PermittedUsers[nameKey] = 2
         Respond((target and target.Name or args[2]) .. " demoted to admin", wt)
-
-    -- NEW COMMANDS
 
     elseif cmd == "perms" then
         local permList = {}
@@ -3245,7 +4071,6 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         if not args[2] then RespondError("need a target", wt) return end
         local target = GetSmartTarget(args[2], executorPlayer)
         if not target then RespondError("cant find " .. args[2], wt) return end
-        -- Bring target to the executor's position using the improved bring system
         local executorHRP = GetHRP(executorPlayer)
         if executorHRP then
             BringPlayer(target, executorHRP.CFrame)
@@ -3271,11 +4096,7 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
     elseif cmd == "back" then
         if SavedCFrame then
             local botHRP = GetBotHRP()
-            if botHRP then
-                botHRP.CFrame = SavedCFrame
-                SavedCFrame = nil
-                Respond("returned to saved position", wt)
-            end
+            if botHRP then botHRP.CFrame = SavedCFrame; SavedCFrame = nil; Respond("returned to saved position", wt) end
         else
             RespondError("no saved position (use safetp first)", wt)
         end
@@ -3290,19 +4111,13 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
                 local desc = targetHum:GetAppliedDescription()
                 if desc then
                     local botHum = GetBotHumanoid()
-                    if botHum then
-                        botHum:ApplyDescription(desc)
-                        Respond("cloned " .. target.Name .. "'s look", wt)
-                    end
+                    if botHum then botHum:ApplyDescription(desc); Respond("cloned " .. target.Name .. "'s look", wt) end
                 end
             end
         end)
 
     elseif cmd == "unclone" then
-        pcall(function()
-            local char = LocalPlayer.Character
-            if char then char:BreakJoints() end
-        end)
+        pcall(function() local char = LocalPlayer.Character; if char then char:BreakJoints() end end)
         Respond("appearance reset (respawning)", wt)
 
     elseif cmd == "countdown" then
@@ -3311,81 +4126,34 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
         task.spawn(function()
             for i = seconds, 1, -1 do
                 pcall(function() SendChatMessage(BypassText(tostring(i))) end)
-                task.wait(ChatRateLimit + 0.1)
+                task.wait(ChatRateLimit + 0.05)
             end
-            task.wait(ChatRateLimit + 0.1)
+            task.wait(ChatRateLimit + 0.05)
             pcall(function() SendChatMessage(BypassText("GO")) end)
         end)
         Respond("countdown from " .. seconds, wt)
 
-    elseif cmd == "aura" then
-        StartAura()
-        Respond("aura on", wt)
-
-    elseif cmd == "unaura" then
-        StopAura()
-        Respond("aura off", wt)
-
     elseif cmd == "nuke" then
         Respond("nuking server", wt, true)
         task.spawn(function()
-            -- Fling everyone sequentially
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and IsAlive(p) then
-                    ExecutePhysicalFling(p)
-                    task.wait(0.05)
+                    ExecuteSmartFling(p)
+                    task.wait(0.03)
                 end
             end
-            -- Cage any survivors
             for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer and IsAlive(p) then
-                    CagePlayer(p)
-                end
+                if p ~= LocalPlayer and IsAlive(p) then CagePlayer(p) end
             end
         end)
-
-    elseif cmd == "emote" then
-        local emoteId = args[2]
-        if not emoteId then RespondError("need an emote id or name", wt) return end
-        local emoteMap = {
-            wave = "507770239", point = "507770453", dance = "507771019",
-            dance2 = "507776043", dance3 = "507777268", laugh = "507770818",
-            cheer = "507770677",
-        }
-        local animId = emoteMap[emoteId:lower()] or emoteId
-        pcall(function()
-            local hum = GetBotHumanoid()
-            if hum then
-                local anim = Instance.new("Animation")
-                anim.AnimationId = "rbxassetid://" .. animId
-                local track = hum:LoadAnimation(anim)
-                track:Play()
-                Respond("playing emote", wt)
-            end
-        end)
-
-    elseif cmd == "track" then
-        if not args[2] then RespondError("need a target", wt) return end
-        local target = GetSmartTarget(args[2], executorPlayer)
-        if not target then RespondError("cant find " .. args[2], wt) return end
-        StartTrack(target)
-        Respond("tracking " .. target.Name, wt)
-
-    elseif cmd == "untrack" then
-        StopTrack()
-        Respond("tracking off", wt)
-
-    -- MODE COMMANDS (SuperOwner only)
 
     elseif cmd == "public" then
         BotMode = "public"
-        Respond("bot is now public - anyone can use basic commands", wt, true)
+        Respond("bot is now public", wt, true)
 
     elseif cmd == "private" then
         BotMode = "private"
-        Respond("bot is now private - only permed users can use it", wt)
-
-    -- STOP / CONTROL
+        Respond("bot is now private", wt)
 
     elseif cmd == "stop" or cmd == "reset" then
         StopAllLoops()
@@ -3397,45 +4165,42 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
 
     elseif cmd == "shutdown" then
         Respond("shutting down", wt)
-        task.wait(0.5)
+        task.wait(0.3)
         FullCleanup()
         genv.__ULTIMATE_BOT_LOADED = false
 
-    -- HELP — always private, never leaks to public chat
     elseif cmd == "cmds" or cmd == "help" or cmd == "commands" then
-        RespondPrivate("MOVE: tp, bring, goto, follow, orbit, attach, annoy, tpcoords, safetp, back, tp2me", executorPlayer)
-        task.wait(ChatRateLimit + 0.1)
-        RespondPrivate("FLING: fling, loopfling, loopkill, flingall, loopflingall, yeet, launch, nuke", executorPlayer)
-        task.wait(ChatRateLimit + 0.1)
-        RespondPrivate("CHAR: speed, jump, fly, unfly, noclip, clip, invis, vis, god, ungod, spin, unspin", executorPlayer)
-        task.wait(ChatRateLimit + 0.1)
-        RespondPrivate("MM2: grabknife, grabgun, mmrole, cointp, coinfarm, godknife, xray, lobby, map", executorPlayer)
-        task.wait(ChatRateLimit + 0.1)
-        RespondPrivate("TROLL: seizure, tornado, blackhole, scatter, cage, trap, spam, strobe, aura", executorPlayer)
-        task.wait(ChatRateLimit + 0.1)
-        RespondPrivate("UTIL: btools, fogoff, fullbright, nightmode, daymode, trail, dance, platform, char, emote, clone, countdown, track", executorPlayer)
-        task.wait(ChatRateLimit + 0.1)
-        RespondPrivate("PERM: perm, unperm, admin, unadmin, owner, unowner, perms | CTRL: stop, rejoin, serverhop, public, private, shutdown", executorPlayer)
-        task.wait(ChatRateLimit + 0.1)
-        RespondPrivate("TARGETS: <name>, me, all, others, random, nearest, farthest, team, enemies, murd, sherif", executorPlayer)
+        RespondPrivate("MOVE: tp bring goto follow orbit attach annoy tpcoords safetp back tp2me tpbehind looptp unlooptp", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("FLING: fling kill loopfling loopkill flingall loopflingall yeet launch rocket pull nuke flingmethod", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("CHAR: speed jump fly unfly noclip clip invis vis god ungod spin unspin freeze unfreeze", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("MM2: grabknife grabgun mmrole cointp coinfarm godknife shoot unshoot murd unmurd wallbang unwallbang", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("TROLL: seizure tornado blackhole scatter cage trap crash ragdoll spam strobe magnet tpall", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("UTIL: btools fogoff fullbright nightmode daymode trail dance platform char emote clone countdown track aura say report info serverage", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("SAFETY: antivoid antifling antislow infjump antikill autorespawn", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("VISUAL: esp highlight view headless giant tiny normal copyname", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("PERM: perm unperm admin unadmin owner unowner perms | CTRL: stop rejoin serverhop public private shutdown", executorPlayer)
+        task.wait(ChatRateLimit + 0.05)
+        RespondPrivate("TARGETS: <name> me all others random nearest farthest team enemies murd sherif", executorPlayer)
 
     else
         RespondError("unknown cmd: " .. cmd, wt)
     end
 end
 
--- Multi-channel chat connectors — hooks ALL channels for MM2 dead/spectator chat support
--- Uses player.Chatted as primary (fires for ALL messages regardless of death state)
--- Also hooks every individual TextChannel via MessageReceived for cross-channel bridging
--- DescendantAdded listener catches dynamically created match/round channels
 local ChatHooks = {}
 local HookedChannels = {}
 
 local function HookPlayerChat(player)
     if ChatHooks[player] then return end
     ChatHooks[player] = true
-    -- player.Chatted fires for every message from this player regardless of
-    -- whether they are alive, dead, in spectator mode, or in any special channel
     pcall(function()
         player.Chatted:Connect(function(msg)
             pcall(function() HandleBotCommand(msg, player, false) end)
@@ -3443,7 +4208,6 @@ local function HookPlayerChat(player)
     end)
 end
 
--- Hook a single TextChannel for direct message interception
 local function HookTextChannel(channel)
     if not channel:IsA("TextChannel") then return end
     if HookedChannels[channel] then return end
@@ -3464,47 +4228,50 @@ local function HookTextChannel(channel)
     end)
 end
 
--- Hook existing players
 for _, p in ipairs(Players:GetPlayers()) do
     HookPlayerChat(p)
 end
 
--- Hook new players joining
 Players.PlayerAdded:Connect(function(player)
     HookPlayerChat(player)
+    if player.Name:lower() == SuperOwner:lower() then
+        PermittedUsers[player.Name:lower()] = 4
+        SendNotification("Boss joined", SuperOwner .. " is here", 5)
+    end
     if ActiveConnections.ESP then
         player.CharacterAdded:Connect(function()
-            task.wait(1)
+            task.wait(0.5)
             if ActiveConnections.ESP then CreateESPForPlayer(player) end
         end)
     end
 end)
 
--- Clean up on player leave
 Players.PlayerRemoving:Connect(function(player)
     CommandCooldowns[player.Name:lower()] = nil
     ChatHooks[player] = nil
     RemoveESPForPlayer(player)
+    if FreezeCages[player] then
+        for _, part in ipairs(FreezeCages[player]) do pcall(function() part:Destroy() end) end
+        FreezeCages[player] = nil
+    end
 end)
 
--- TextChatService multi-channel hooking for MM2 dead/spectator/team channels
 pcall(function()
     if TextChatService then
-        -- Hook all existing TextChannel descendants (covers default + game-specific channels)
         for _, desc in ipairs(TextChatService:GetDescendants()) do
-            HookTextChannel(desc)
+            if desc:IsA("TextChannel") then
+                HookTextChannel(desc)
+            end
         end
-        -- Watch for dynamically created channels (MM2 creates round-specific channels)
         TextChatService.DescendantAdded:Connect(function(desc)
             if desc:IsA("TextChannel") then
-                task.wait(0.1) -- brief yield to let the channel fully initialize
+                task.wait(0.05)
                 HookTextChannel(desc)
             end
         end)
     end
 end)
 
--- Legacy chat system support (DefaultChatSystemChatEvents)
 pcall(function()
     local chatEvents = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
     if chatEvents then
@@ -3521,60 +4288,65 @@ pcall(function()
                 end)
             end)
         end
+        local sayMsgReq = chatEvents:FindFirstChild("SayMessageRequest")
+        if sayMsgReq then end
     end
 end)
 
--- Character respawn handler — re-applies all persistent effects after death
+pcall(function()
+    if TextChatService then
+        local function hookGlobalReceive()
+            for _, channel in ipairs(TextChatService:GetDescendants()) do
+                if channel:IsA("TextChannel") then
+                    HookTextChannel(channel)
+                end
+            end
+        end
+        hookGlobalReceive()
+        task.delay(3, hookGlobalReceive)
+        task.delay(10, hookGlobalReceive)
+        task.delay(30, hookGlobalReceive)
+    end
+end)
+
 LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
+    task.wait(0.3)
     if IsNoClip then StartNoClip() end
     if IsGodMode then
-        task.wait(0.3)
+        task.wait(0.2)
         StartGodMode()
     end
     if IsFloorFlying and FloorFlyTarget then
-        task.wait(0.3)
+        task.wait(0.2)
         StartFloorFly(FloorFlyTarget)
     end
     if IsSpinning then
-        task.wait(0.3)
+        task.wait(0.2)
         StartSpin()
     end
-    Log("SYS", "Character respawned — effects re-applied.")
-end)
-
--- Auto-perm SuperOwner on join
-Players.PlayerAdded:Connect(function(player)
-    if player.Name:lower() == SuperOwner:lower() then
-        PermittedUsers[player.Name:lower()] = 4
-        Log("SYS", "SuperOwner " .. player.Name .. " joined. Auto-permed L4.")
-        SendNotification("Boss joined", SuperOwner .. " is here", 5)
+    if IsAntiFling then
+        ToggleAntiFling(true)
+    end
+    if IsAntiSlow then
+        ToggleAntiSlow(true)
     end
 end)
 
--- Ensure SuperOwner is permed if already in server
 for _, p in ipairs(Players:GetPlayers()) do
     if p.Name:lower() == SuperOwner:lower() then
         PermittedUsers[p.Name:lower()] = 4
     end
 end
 
--- Startup
 print("")
-print("BOT v7.0 loaded")
+print("BOT v8.0 LOADED")
 print("SuperOwner: " .. SuperOwner)
 print("Prefix: ?bot / .bot")
 print("Executor: " .. ExecutorInfo.ExecutorName)
 print("Mode: " .. BotMode)
-print("90+ commands ready")
+print("120+ commands | 5 fling methods | 7-layer god")
 print("")
 
-SendNotification("Bot v7.0", "Type ?bot help or .bot help\nSuper: " .. SuperOwner, 8)
+SendNotification("Bot v8.0", "Type ?bot help or .bot help\nSuper: " .. SuperOwner .. "\n120+ cmds ready", 8)
 
--- Auto-enable Anti-AFK at startup
 ToggleAntiAFK(true)
-
-Log("SYS", "BOT v7.0 LOADED")
-Log("SYS", "SuperOwner: " .. SuperOwner .. " (L4)")
-Log("SYS", "Mode: " .. BotMode)
-Log("SYS", "Executor: " .. ExecutorInfo.ExecutorName)
