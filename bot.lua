@@ -24,7 +24,19 @@ local _unpack = unpack or table.unpack or function(t, i, j)
     i = i or 1
     j = j or #t
     if i > j then return end
-    return t[i], _unpack(t, i + 1, j)
+    -- Non-recursive select-based unpack to avoid stack overflow
+    local n = j - i + 1
+    if n <= 0 then return end
+    if n == 1 then return t[i] end
+    if n == 2 then return t[i], t[i+1] end
+    if n == 3 then return t[i], t[i+1], t[i+2] end
+    if n == 4 then return t[i], t[i+1], t[i+2], t[i+3] end
+    if n == 5 then return t[i], t[i+1], t[i+2], t[i+3], t[i+4] end
+    if n == 6 then return t[i], t[i+1], t[i+2], t[i+3], t[i+4], t[i+5] end
+    if n == 7 then return t[i], t[i+1], t[i+2], t[i+3], t[i+4], t[i+5], t[i+6] end
+    if n == 8 then return t[i], t[i+1], t[i+2], t[i+3], t[i+4], t[i+5], t[i+6], t[i+7] end
+    -- For larger tables, just return up to 8 values (safe fallback)
+    return t[i], t[i+1], t[i+2], t[i+3], t[i+4], t[i+5], t[i+6], t[i+7]
 end
 
 do
@@ -50,9 +62,10 @@ if not task.spawn then
 end
 if not task.wait then
     task.wait = function(t)
-        local s = tick()
-        repeat game:GetService("RunService").Heartbeat:Wait() until tick() - s >= (t or 0.03)
-        return tick() - s
+        local _tick = tick or os.clock or function() return 0 end
+        local s = _tick()
+        repeat game:GetService("RunService").Heartbeat:Wait() until _tick() - s >= (t or 0.03)
+        return _tick() - s
     end
 end
 if not task.delay then
@@ -66,9 +79,25 @@ if not task.cancel then
 end
 if not string.split then
     string.split = function(str, sep)
+        if not str then return {} end
+        if not sep or sep == "" then
+            local result = {}
+            for i = 1, #str do
+                table.insert(result, str:sub(i, i))
+            end
+            return result
+        end
         local result = {}
-        for part in str:gmatch("([^" .. sep .. "]+)") do
-            table.insert(result, part)
+        local start = 1
+        local sepLen = #sep
+        while true do
+            local found = str:find(sep, start, true)
+            if not found then
+                table.insert(result, str:sub(start))
+                break
+            end
+            table.insert(result, str:sub(start, found - 1))
+            start = found + sepLen
         end
         return result
     end
@@ -222,7 +251,7 @@ end
 local FlyBodyGyro       = nil
 local FlyBodyVelocity   = nil
 local IsFlying          = false
-local IsNoClip          = true
+local IsNoClip          = false
 local IsGodMode         = false
 local IsAntiAFK         = false
 local IsAntiVoid        = false
@@ -264,7 +293,7 @@ local CommandLog        = {}
 local PlatformPart      = nil
 local CageParts         = {}
 local TrailParts        = {}
-local BringPlayer
+local BringPlayer -- forward declaration; assigned on line ~1911
 local XRayParts         = {}
 local AuraParts         = {}
 local FreezeCages       = {}
@@ -273,6 +302,8 @@ local OriginalLighting  = {}
 local LastChatTime      = 0
 local GodHealthConnection = nil
 local GodDiedConnection = nil
+local CommandDedup      = {}
+local DEDUP_WINDOW      = 0.3
 
 pcall(function()
     OriginalLighting.Ambient = Lighting.Ambient
@@ -283,7 +314,7 @@ pcall(function()
     OriginalLighting.OutdoorAmbient = Lighting.OutdoorAmbient
 end)
 
-local function Log(level, message)
+function Log(level, message)
     print(string.format("[%s] %s: %s", os.date("%H:%M:%S"), level, message))
 end
 
@@ -819,7 +850,7 @@ local function StopNoClip()
     IsNoClip = false
 end
 
-StartNoClip()
+pcall(StartNoClip)
 
 local function FlingMethod1_CFrameSlam(targetPlayer, maxIter)
     local botHRP = GetBotHRP()
@@ -1312,11 +1343,17 @@ end
 
 local function PullPlayer(target)
     task.spawn(function()
-        if not target or not target.Parent then return end
-        local botHRP = GetBotHRP()
-        if not botHRP then return end
-        local dest = botHRP.CFrame
-        if BringPlayer then BringPlayer(target, dest) end
+        pcall(function()
+            if not target or not target.Parent then return end
+            local botHRP = GetBotHRP()
+            if not botHRP then return end
+            local dest = botHRP.CFrame
+            if BringPlayer and type(BringPlayer) == "function" then
+                BringPlayer(target, dest)
+            else
+                Log("ERROR", "BringPlayer not available yet")
+            end
+        end)
     end)
 end
 
@@ -1559,7 +1596,9 @@ local function FreezePlayerAdvanced(target)
         end)
     end
     task.spawn(function()
-        if BringPlayer then BringPlayer(target, CFrame.new(pos)) end
+        if BringPlayer and type(BringPlayer) == "function" then
+            BringPlayer(target, CFrame.new(pos))
+        end
     end)
 end
 
@@ -1833,6 +1872,7 @@ local function StartESP()
     ActiveConnections.ESP = RunService.Heartbeat:Connect(function()
         pcall(function()
             local botHRP = GetBotHRP()
+            local toRemove = {}
             for player, objects in pairs(ESPObjects) do
                 if player and player.Parent and objects.distLabel then
                     local targetHRP = GetHRP(player)
@@ -1848,8 +1888,11 @@ local function StartESP()
                         end
                     end
                 else
-                    RemoveESPForPlayer(player)
+                    table.insert(toRemove, player)
                 end
+            end
+            for _, player in ipairs(toRemove) do
+                RemoveESPForPlayer(player)
             end
         end)
     end)
@@ -3126,6 +3169,22 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
     if type(message) ~= "string" then return end
     local matchedPrefix, cleanedMessage = FindPrefix(message)
     if not matchedPrefix then return end
+    -- Dedup: prevent the same message from being processed multiple times
+    -- via Chatted + TextChatService + OnMessageDoneFiltering hooks
+    local dedupKey = executorPlayer.Name .. ":" .. message
+    local now = tick()
+    if CommandDedup[dedupKey] and (now - CommandDedup[dedupKey]) < DEDUP_WINDOW then
+        return
+    end
+    CommandDedup[dedupKey] = now
+    -- Clean old dedup entries periodically
+    if math.random(1, 20) == 1 then
+        for k, t in pairs(CommandDedup) do
+            if (now - t) > DEDUP_WINDOW * 3 then
+                CommandDedup[k] = nil
+            end
+        end
+    end
     if not CanUseBot(executorPlayer) then return end
     local permLevel = GetPermLevel(executorPlayer)
     if permLevel < 1 then return end
@@ -4028,13 +4087,24 @@ local function HandleBotCommand(message, executorPlayer, isWhisper)
     elseif cmd == "autorespawn" then
         DisconnectSafe("AutoRespawn")
         IsAutoRespawn = true
+        local lastRespawnAttempt = 0
         ActiveConnections.AutoRespawn = RunService.Heartbeat:Connect(function()
             pcall(function()
                 if not IsAutoRespawn then DisconnectSafe("AutoRespawn") return end
+                local now = tick()
+                if (now - lastRespawnAttempt) < 2 then return end
                 if not IsBotAlive() then
+                    lastRespawnAttempt = now
                     pcall(function()
-                        local char = LocalPlayer.Character
-                        if char then char:BreakJoints() end
+                        -- Try LoadCharacter first (works on most executors)
+                        local success = pcall(function() LocalPlayer:LoadCharacter() end)
+                        if not success then
+                            -- Fallback: BreakJoints to force respawn cycle
+                            local char = LocalPlayer.Character
+                            if char then
+                                char:Destroy()
+                            end
+                        end
                     end)
                 end
             end)
@@ -4367,26 +4437,28 @@ pcall(function()
 end)
 
 LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.3)
-    if IsNoClip then StartNoClip() end
-    if IsGodMode then
-        task.wait(0.2)
-        StartGodMode()
-    end
-    if IsFloorFlying and FloorFlyTarget then
-        task.wait(0.2)
-        StartFloorFly(FloorFlyTarget)
-    end
-    if IsSpinning then
-        task.wait(0.2)
-        StartSpin()
-    end
-    if IsAntiFling then
-        ToggleAntiFling(true)
-    end
-    if IsAntiSlow then
-        ToggleAntiSlow(true)
-    end
+    pcall(function()
+        task.wait(0.3)
+        if IsNoClip then pcall(StartNoClip) end
+        if IsGodMode then
+            task.wait(0.2)
+            pcall(StartGodMode)
+        end
+        if IsFloorFlying and FloorFlyTarget then
+            task.wait(0.2)
+            pcall(function() StartFloorFly(FloorFlyTarget) end)
+        end
+        if IsSpinning then
+            task.wait(0.2)
+            pcall(StartSpin)
+        end
+        if IsAntiFling then
+            pcall(function() ToggleAntiFling(true) end)
+        end
+        if IsAntiSlow then
+            pcall(function() ToggleAntiSlow(true) end)
+        end
+    end)
 end)
 
 for _, p in ipairs(Players:GetPlayers()) do
@@ -4395,15 +4467,19 @@ for _, p in ipairs(Players:GetPlayers()) do
     end
 end
 
-print("")
-print("BOT v8.0 LOADED")
-print("SuperOwner: " .. SuperOwner)
-print("Prefix: ?bot / .bot")
-print("Executor: " .. ExecutorInfo.ExecutorName)
-print("Mode: " .. BotMode)
-print("120+ commands | 5 fling methods | 7-layer god")
-print("")
+pcall(function()
+    print("")
+    print("BOT v8.0 LOADED")
+    print("SuperOwner: " .. SuperOwner)
+    print("Prefix: ?bot / .bot")
+    print("Executor: " .. (ExecutorInfo.ExecutorName or "Unknown"))
+    print("Mode: " .. BotMode)
+    print("120+ commands | 5 fling methods | 7-layer god")
+    print("")
+end)
 
-SendNotification("Bot v8.0", "Type ?bot help or .bot help\nSuper: " .. SuperOwner .. "\n120+ cmds ready", 8)
+pcall(function()
+    SendNotification("Bot v8.0", "Type ?bot help or .bot help\nSuper: " .. SuperOwner .. "\n120+ cmds ready", 8)
+end)
 
-ToggleAntiAFK(true)
+pcall(function() ToggleAntiAFK(true) end)
