@@ -1,15 +1,8 @@
-local genv
-do
-    local _ok, _result = pcall(function()
-        if type(getgenv) == "function" then
-            return getgenv()
-        end
-        return nil
-    end)
-    if _ok and type(_result) == "table" then
-        genv = _result
-    else
-        genv = _G or {}
+local genv = _G or {}
+if type(getgenv) == "function" then
+    local s, r = pcall(getgenv)
+    if s and type(r) == "table" then
+        genv = r
     end
 end
 
