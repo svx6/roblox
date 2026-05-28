@@ -117,7 +117,7 @@ local AnnoyDelay      = 0.08
 local BringIterations = 250
 local BringDelay      = 0
 local ChatRateLimit   = 1.0
-local BotStartTime    = tick()
+local BotStartTime    = (tick or os.clock or function() return 0 end)()
 local BotMode = "private"
 local LastTarget = nil
 
@@ -331,33 +331,33 @@ local function LogCommand(executorName, command, targetName)
 end
 
 local HomoglyphMap = {
-    a = {"\xD0\xB0", "\xC9\x91"},
-    e = {"\xD0\xB5", "\xC4\x99"},
-    o = {"\xD0\xBE", "\xC3\xB6"},
-    c = {"\xD1\x81", "\xC4\x87"},
-    p = {"\xD1\x80"},
-    s = {"\xD1\x95", "\xC5\x9B"},
-    i = {"\xD1\x96", "\xC3\xAD"},
-    x = {"\xD1\x85"},
-    y = {"\xD1\x83", "\xC3\xBD"},
-    n = {"\xD0\xBF"},
-    h = {"\xD2\xBB"},
-    d = {"\xD4\x81"},
-    g = {"\xC9\xA1"},
-    k = {"\xD2\x9B"},
-    l = {"\xD1\x96"},
-    m = {"\xD0\xBC"},
-    t = {"\xD1\x82"},
-    u = {"\xD1\x83"},
-    v = {"\xD1\x83"},
-    w = {"\xD1\xA1"},
-    r = {"\xD0\xB3"},
+    a = {string.char(208, 176), string.char(201, 145)},
+    e = {string.char(208, 181), string.char(196, 153)},
+    o = {string.char(208, 190), string.char(195, 182)},
+    c = {string.char(209, 129), string.char(196, 135)},
+    p = {string.char(209, 128)},
+    s = {string.char(209, 149), string.char(197, 155)},
+    i = {string.char(209, 150), string.char(195, 173)},
+    x = {string.char(209, 133)},
+    y = {string.char(209, 131), string.char(195, 189)},
+    n = {string.char(208, 191)},
+    h = {string.char(210, 187)},
+    d = {string.char(212, 129)},
+    g = {string.char(201, 161)},
+    k = {string.char(210, 155)},
+    l = {string.char(209, 150)},
+    m = {string.char(208, 188)},
+    t = {string.char(209, 130)},
+    u = {string.char(209, 131)},
+    v = {string.char(209, 131)},
+    w = {string.char(209, 161)},
+    r = {string.char(208, 179)},
 }
-local ZeroWidthSpace = "\xE2\x80\x8B"
-local ZeroWidthNJ    = "\xE2\x80\x8C"
-local ZeroWidthJ     = "\xE2\x80\x8D"
-local HairSpace      = "\xE2\x80\x8A"
-local ThinSpace      = "\xE2\x80\x89"
+local ZeroWidthSpace = string.char(226, 128, 139)
+local ZeroWidthNJ    = string.char(226, 128, 140)
+local ZeroWidthJ     = string.char(226, 128, 141)
+local HairSpace      = string.char(226, 128, 138)
+local ThinSpace      = string.char(226, 128, 137)
 local InvisChars = {ZeroWidthSpace, ZeroWidthNJ, ZeroWidthJ, HairSpace}
 
 local function BypassText(text)
@@ -4355,32 +4355,42 @@ local function HookTextChannel(channel)
     end)
 end
 
-for _, p in ipairs(Players:GetPlayers()) do
-    HookPlayerChat(p)
-end
-
-Players.PlayerAdded:Connect(function(player)
-    HookPlayerChat(player)
-    if player.Name:lower() == SuperOwner:lower() then
-        PermittedUsers[player.Name:lower()] = 4
-        SendNotification("Boss joined", SuperOwner .. " is here", 5)
-    end
-    if ActiveConnections.ESP then
-        player.CharacterAdded:Connect(function()
-            task.wait(0.5)
-            if ActiveConnections.ESP then CreateESPForPlayer(player) end
-        end)
+pcall(function()
+    for _, p in ipairs(Players:GetPlayers()) do
+        HookPlayerChat(p)
     end
 end)
 
-Players.PlayerRemoving:Connect(function(player)
-    CommandCooldowns[player.Name:lower()] = nil
-    ChatHooks[player] = nil
-    RemoveESPForPlayer(player)
-    if FreezeCages[player] then
-        for _, part in ipairs(FreezeCages[player]) do pcall(function() part:Destroy() end) end
-        FreezeCages[player] = nil
-    end
+pcall(function()
+    Players.PlayerAdded:Connect(function(player)
+        pcall(function()
+            HookPlayerChat(player)
+            if player.Name:lower() == SuperOwner:lower() then
+                PermittedUsers[player.Name:lower()] = 4
+                SendNotification("Boss joined", SuperOwner .. " is here", 5)
+            end
+            if ActiveConnections.ESP then
+                player.CharacterAdded:Connect(function()
+                    task.wait(0.5)
+                    if ActiveConnections.ESP then CreateESPForPlayer(player) end
+                end)
+            end
+        end)
+    end)
+end)
+
+pcall(function()
+    Players.PlayerRemoving:Connect(function(player)
+        pcall(function()
+            CommandCooldowns[player.Name:lower()] = nil
+            ChatHooks[player] = nil
+            RemoveESPForPlayer(player)
+            if FreezeCages[player] then
+                for _, part in ipairs(FreezeCages[player]) do pcall(function() part:Destroy() end) end
+                FreezeCages[player] = nil
+            end
+        end)
+    end)
 end)
 
 pcall(function()
@@ -4436,36 +4446,40 @@ pcall(function()
     end
 end)
 
-LocalPlayer.CharacterAdded:Connect(function(char)
-    pcall(function()
-        task.wait(0.3)
-        if IsNoClip then pcall(StartNoClip) end
-        if IsGodMode then
-            task.wait(0.2)
-            pcall(StartGodMode)
-        end
-        if IsFloorFlying and FloorFlyTarget then
-            task.wait(0.2)
-            pcall(function() StartFloorFly(FloorFlyTarget) end)
-        end
-        if IsSpinning then
-            task.wait(0.2)
-            pcall(StartSpin)
-        end
-        if IsAntiFling then
-            pcall(function() ToggleAntiFling(true) end)
-        end
-        if IsAntiSlow then
-            pcall(function() ToggleAntiSlow(true) end)
-        end
+pcall(function()
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        pcall(function()
+            task.wait(0.3)
+            if IsNoClip then pcall(StartNoClip) end
+            if IsGodMode then
+                task.wait(0.2)
+                pcall(StartGodMode)
+            end
+            if IsFloorFlying and FloorFlyTarget then
+                task.wait(0.2)
+                pcall(function() StartFloorFly(FloorFlyTarget) end)
+            end
+            if IsSpinning then
+                task.wait(0.2)
+                pcall(StartSpin)
+            end
+            if IsAntiFling then
+                pcall(function() ToggleAntiFling(true) end)
+            end
+            if IsAntiSlow then
+                pcall(function() ToggleAntiSlow(true) end)
+            end
+        end)
     end)
 end)
 
-for _, p in ipairs(Players:GetPlayers()) do
-    if p.Name:lower() == SuperOwner:lower() then
-        PermittedUsers[p.Name:lower()] = 4
+pcall(function()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Name:lower() == SuperOwner:lower() then
+            PermittedUsers[p.Name:lower()] = 4
+        end
     end
-end
+end)
 
 pcall(function()
     print("")
