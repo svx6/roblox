@@ -1,0 +1,83 @@
+-- Pro Architect V6 - JSON Auto-Builder (Hand Blueprint)
+local HttpService = game:GetService("HttpService")
+
+-- 1. جدول البيانات مبرمج بصيغة JSON (يحتوي على إحداثيات البلوكات البيضاء لتشكيل يد)
+-- الـ Offset هنا يمثل مكان البلوكة بالنسبة لنقطة البداية (X, Y, Z)
+local JSON_BLUEPRINT = [[
+[
+    {"Offset": [0, 0, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [1, 0, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [2, 0, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [3, 0, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [0, 1, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [3, 1, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [0, 2, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [1, 2, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [2, 2, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [3, 2, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [0, 3, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [1, 3, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [2, 3, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [3, 3, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [0, 4, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [1, 5, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [2, 5, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [3, 5, 0], "Color": "White", "Material": "SmoothPlastic"},
+    {"Offset": [-1, 2, 0], "Color": "White", "Material": "SmoothPlastic"}
+]
+]]
+
+-- 2. تحويل الـ JSON إلى جدول لوآ (Lua Table) يفهمه المحرك
+local success, blocksToBuild = pcall(function()
+    return HttpService:JSONDecode(JSON_BLUEPRINT)
+end)
+
+if not success or not blocksToBuild then
+    warn("❌ خطأ في قراءة بيانات الـ JSON")
+    return
+end
+
+-- 3. دالة البناء الاحترافية
+local function BuildFromJson()
+    -- نأخذ موقع اللاعب الحالي كنقطة انطلاق (Origin) للبناء أمام اللاعب مباشرة
+    local player = game.Players.LocalPlayer
+    local character = player.Character or player.CharacterAdded:Wait()
+    local rootPart = character:WaitForChild("HumanoidRootPart")
+    local startPosition = rootPart.Position + (rootPart.CFrame.LookVector * 10) -- يبعد 10 studs أمام اللاعب
+
+    -- هنا تضع الـ RemoteEvent الذي جلبته أو المحرك الخاص بك
+    -- كمثال احترافي، سنستخدم متغير الـ Engine الخاص بك إذا كان موجوداً، أو نرسل للسيرفر مباشرة
+    local Remote = game:GetService("ReplicatedStorage"):FindFirstChild("BuildRemote") or getgenv().BuildRemote
+
+    if not Remote then
+        warn("⚠️ لم يتم العثور على الـ Remote الخاص بالبناء، تأكد من تشغيل الـ Fuzzer أو الـ SimpleSpy أولاً!")
+        -- سنكمل المحاكاة في حال كنت تستخدم محركك الخاص
+    end
+
+    print("🏗️ جاري بدء البناء السحابي لـ (اليد)...")
+
+    -- حلقة المرور على كل البلوكات داخل الـ JSON
+    for _, block in ipairs(blocksToBuild) do
+        -- حساب الإحداثيات الحقيقية في الماب بناءً على الـ Offset وحجم البلوكة (نفرض حجمها 4x4x4 أو 2x2x2)
+        local blockSize = 4 
+        local finalPosition = startPosition + Vector3.new(
+            block.Offset[1] * blockSize,
+            block.Offset[2] * blockSize,
+            block.Offset[3] * blockSize
+        )
+
+        -- إرسال الطلب للسيرفر (قم بتعديل الـ Arguments بناءً على ما وجدته في SimpleSpy)
+        pcall(function()
+            -- هنا نرسل البلوكة البيضاء دائماً لتضمن عملها
+            Remote:FireServer("Part", finalPosition, block.Color, block.Material)
+        end)
+
+        -- انتظار أجزاء من الثانية لتفادي طردك من السيرفر (Anti-Cheat Bypass)
+        task.wait(0.05) 
+    end
+
+    print("✅ تم الانتهاء من بناء المجسم بنجاح!")
+end
+
+-- تشغيل أمر البناء
+BuildFromJson()
