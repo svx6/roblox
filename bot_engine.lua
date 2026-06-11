@@ -217,7 +217,7 @@ local Flags = {
     IsFloorFlying = false, IsAuraActive = false, IsTracking = false, IsFlingBusy = false,
     IsMagnetOn = false, IsAntiSlow = false, IsAntiFling = false, IsLoopTP = false,
     IsAutoShoot = false, IsAutoMurd = false, IsWallBang = false, IsAutoRespawn = false,
-    IsAutoJoin = false, PreferredFlingMethod = 0, PhysicsStabilizerActive = false,
+    IsAutoJoin = false, IsDestroyServer = false, PreferredFlingMethod = 0, PhysicsStabilizerActive = false,
     -- Object/reference flags
     FloorFlyTarget = nil, FloorFlyPlatform = nil, TrackTarget = nil, TrackLastPos = nil,
     LoopTPTarget = nil, AutoShootTarget = nil, AutoMurdTarget = nil, AutoJoinTarget = nil,
@@ -573,7 +573,7 @@ local function StopAllLoops()
     Flags.IsCoinFarming = false; Flags.IsFarming = false; Flags.IsBlackHole = false; Flags.IsStrobing = false; Flags.IsGodKnife = false
     Flags.IsMimicking = false; Flags.IsCreeping = false; Flags.IsTrailing = false; Flags.IsDancing = false
     Flags.IsAuraActive = false; Flags.IsTracking = false; Flags.IsMagnetOn = false; Flags.IsLoopTP = false
-    Flags.IsAutoShoot = false; Flags.IsAutoMurd = false; Flags.IsWallBang = false; Flags.IsFlingBusy = false
+    Flags.IsAutoShoot = false; Flags.IsAutoMurd = false; Flags.IsWallBang = false; Flags.IsFlingBusy = false; Flags.IsDestroyServer = false
     Flags.LoopTPTarget = nil; Flags.AutoShootTarget = nil; Flags.AutoMurdTarget = nil; Flags.TrackTarget = nil
     for _, pt in ipairs(CageParts) do pcall(function() pt:Destroy() end) end; CageParts = {}
     for _, pt in ipairs(TrailParts) do pcall(function() pt:Destroy() end) end; TrailParts = {}
