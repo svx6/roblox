@@ -12,16 +12,21 @@ return {
         BotEnv.DisconnectSafe("LoopKill")
         BotEnv.DisconnectSafe("LoopFlingAll")
         local lastFlingTime = 0
+        local flingActive = false
         BotEnv.ActiveConnections.LoopKill = BotEnv.RunService.Heartbeat:Connect(function()
+            if flingActive then return end
             local now = tick()
             if (now - lastFlingTime) < BotEnv.LoopFlingDelay then return end
             lastFlingTime = now
-            pcall(function()
-                if not target or not target.Parent then BotEnv.DisconnectSafe("LoopKill") return end
-                if BotEnv.IsAlive(target) and BotEnv.GetHRP(target) then
-                    task.spawn(function() BotEnv.ExecuteSmartFling(target) end)
-                end
-            end)
+            if target and target.Parent and BotEnv.IsAlive(target) and BotEnv.GetHRP(target) then
+                flingActive = true
+                task.spawn(function()
+                    pcall(function() BotEnv.ExecuteSmartFling(target) end)
+                    flingActive = false
+                end)
+            elseif not target or not target.Parent then
+                BotEnv.DisconnectSafe("LoopKill")
+            end
         end)
         BotEnv.Respond("loopkill on " .. target.Name, wt)
     end,
