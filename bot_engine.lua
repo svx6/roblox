@@ -57,8 +57,8 @@ local safeTick = tick or os.clock or function() return 0 end
 
 local SuperOwner      = "roboxproplyer"
 local Prefixes        = {"?bot ", ".bot ", ",bot ", "/bot "}
-local FlingPower      = 9999999
-local LoopFlingDelay  = 0.8
+local FlingPower      = 99999999
+local LoopFlingDelay  = 0.3
 local FollowDistance  = 5
 local OrbitRadius     = 12
 local OrbitSpeed      = 3
@@ -157,6 +157,33 @@ pcall(function() if ExecutorInfo.HasSetFpsCap then setfpscap(999) end end)
 if not _G.__BOT_SAVED_PERMS then _G.__BOT_SAVED_PERMS = {} end
 if not _G.__BOT_SAVED_SETTINGS then _G.__BOT_SAVED_SETTINGS = {} end
 
+local PERM_SAVE_FILE = "bot_saved_perms.json"
+local function SavePermsToFile()
+    pcall(function()
+        if type(writefile) == "function" and HttpService then
+            writefile(PERM_SAVE_FILE, HttpService:JSONEncode(_G.__BOT_SAVED_PERMS))
+        end
+    end)
+end
+local function LoadPermsFromFile()
+    pcall(function()
+        if type(readfile) == "function" and type(isfile) == "function" and HttpService then
+            if isfile(PERM_SAVE_FILE) then
+                local data = readfile(PERM_SAVE_FILE)
+                if data and #data > 0 then
+                    local ok, decoded = pcall(function() return HttpService:JSONDecode(data) end)
+                    if ok and decoded and type(decoded) == "table" then
+                        for k, v in pairs(decoded) do
+                            _G.__BOT_SAVED_PERMS[k:lower()] = v
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+LoadPermsFromFile()
+
 local PermittedUsers = {[SuperOwner:lower()] = 4}
 for pn, lv in pairs(_G.__BOT_SAVED_PERMS) do
     if pn:lower() ~= SuperOwner:lower() then PermittedUsers[pn:lower()] = lv end
@@ -208,7 +235,7 @@ local OriginalLighting = {}
 local LastChatTime = 0
 local GodHealthConnection, GodDiedConnection = nil, nil
 local CommandDedup = {}
-local DEDUP_WINDOW = 0.25
+local DEDUP_WINDOW = 0.4
 local OriginalCameraSubject = nil
 local AntiGravityForce = nil
 
@@ -433,13 +460,13 @@ local function SetPermission(pn, lv, sv)
     local k = pn:lower()
     if k == SuperOwner:lower() then return end
     PermittedUsers[k] = lv
-    if sv then _G.__BOT_SAVED_PERMS[k] = lv end
+    if sv then _G.__BOT_SAVED_PERMS[k] = lv; SavePermsToFile() end
 end
 local function RemovePermission(pn, us)
     local k = pn:lower()
     if k == SuperOwner:lower() then return end
     PermittedUsers[k] = nil
-    if us then _G.__BOT_SAVED_PERMS[k] = nil end
+    if us then _G.__BOT_SAVED_PERMS[k] = nil; SavePermsToFile() end
 end
 local function IsTargetProtected(tp)
     return tp and tp.Name:lower() == SuperOwner:lower()
@@ -911,27 +938,105 @@ local function DetectAntiFling(tp)
     return score
 end
 
+-- UltraFling: Combined best techniques for near-instant fling
+local function UltraFling(tp, mi)
+    local bh = GetBotHRP(); local bm = GetBotHumanoid()
+    if not bh or not bm then return false end
+    local sp = bh.CFrame; local k = false
+    local char = LocalPlayer.Character
+    local hasFTI = ExecutorInfo.HasFireTouchInterest
+    PreFling()
+    -- Heavy mass for maximum physics impact
+    local origProps = {}
+    pcall(function()
+        if char then
+            for _, pt in ipairs(char:GetDescendants()) do
+                if pt:IsA("BasePart") then
+                    origProps[pt] = pt.CustomPhysicalProperties
+                    pt.CustomPhysicalProperties = PhysicalProperties.new(100, 0, 0, 100, 100)
+                end
+            end
+        end
+    end)
+    bm:ChangeState(Enum.HumanoidStateType.Physics)
+    local bv = Instance.new("BodyVelocity"); bv.Velocity = Vector3.new(FlingPower, FlingPower, FlingPower); bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge); bv.P = 99999; bv.Parent = bh
+    local ba = Instance.new("BodyAngularVelocity"); ba.AngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower); ba.MaxTorque = Vector3.new(math.huge, math.huge, math.huge); ba.P = 99999; ba.Parent = bh
+    for i = 1, (mi or 15) do
+        if not tp or not tp.Parent then break end
+        if not IsAlive(tp) then k = true; break end
+        local th = GetHRP(tp); if not th then break end
+        local cb = GetBotHRP(); if not cb then break end
+        -- Alternate overlap and orbital for maximum physics contact
+        if i % 3 == 0 then
+            local angle = i * 0.8
+            cb.CFrame = th.CFrame * CFrame.new(math.cos(angle)*1.2, math.sin(i*0.5)*0.5, math.sin(angle)*1.2)
+        else
+            cb.CFrame = th.CFrame * CFrame.new(math.random(-1,1)*0.3, math.random(-1,1)*0.3, math.random(-1,1)*0.3)
+        end
+        if i % 4 == 0 then
+            bv.Velocity = Vector3.new(math.random(-1,1)*FlingPower, math.random(-1,1)*FlingPower, math.random(-1,1)*FlingPower)
+            ba.AngularVelocity = Vector3.new(math.random(-1,1)*FlingPower, math.random(-1,1)*FlingPower, math.random(-1,1)*FlingPower)
+        end
+        cb.AssemblyLinearVelocity = (th.Position - cb.Position).Unit * FlingPower
+        cb.AssemblyAngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower)
+        -- firetouchinterest for guaranteed contact if executor supports it
+        if hasFTI then
+            pcall(function()
+                firetouchinterest(cb, th, 0)
+                firetouchinterest(cb, th, 1)
+            end)
+            local tChar = GetCharacter(tp)
+            if tChar then
+                for _, part in ipairs(tChar:GetDescendants()) do
+                    if part:IsA("BasePart") and part ~= th then
+                        pcall(function() firetouchinterest(cb, part, 0); firetouchinterest(cb, part, 1) end)
+                    end
+                end
+            end
+        end
+        pcall(function() ApplyAntiGravity() end)
+        RunService.Heartbeat:Wait()
+    end
+    pcall(function() bv:Destroy() end); pcall(function() ba:Destroy() end)
+    pcall(function()
+        if char then
+            for pt, props in pairs(origProps) do
+                if pt and pt.Parent then
+                    if props then pt.CustomPhysicalProperties = props
+                    else pt.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.3, 0.5, 1, 1) end
+                end
+            end
+        end
+    end)
+    PostFling(sp)
+    return k or not IsAlive(tp)
+end
+
 local function ExecuteSmartFling(tp)
     local ws = safeTick()
-    while Flags.IsFlingBusy do task.wait(0.05); if safeTick() - ws > 10 then return end end
+    -- Short timeout: flings are now near-instant
+    while Flags.IsFlingBusy do task.wait(0.05); if safeTick() - ws > 2 then return end end
     Flags.IsFlingBusy = true
     pcall(function()
         if not tp or not tp.Parent or not IsAlive(tp) then return end
+        -- If user set a preferred method, use it with low iterations
         if Flags.PreferredFlingMethod > 0 and Flags.PreferredFlingMethod <= #FlingMethods then
-            if FlingMethods[Flags.PreferredFlingMethod](tp) then return end
+            if FlingMethods[Flags.PreferredFlingMethod](tp, 15) then return end
         end
+        -- Try UltraFling first (combines all best techniques, ~15 frames)
+        if UltraFling(tp, 15) then return end
+        -- If target survived, try focused fallbacks
+        if not tp or not tp.Parent or not IsAlive(tp) then return end
+        if not IsBotAlive() then task.wait(0.3); EnsureCharacter(); task.wait(0.2) end
         local afScore = DetectAntiFling(tp)
-        local order
         if afScore >= 5 then
-            order = {6, 9, 7, 8, 3, 4, 1, 2, 5}
+            -- Anti-fling detected: MicroPulse then TouchSpam
+            if FlingMethods[6] and FlingMethods[6](tp, 20) then return end
+            if tp and tp.Parent and IsAlive(tp) and FlingMethods[9] then FlingMethods[9](tp, 20) end
         else
-            order = {1, 3, 2, 4, 6, 5, 7, 8, 9}
-        end
-        for _, idx in ipairs(order) do
-            if not tp or not tp.Parent or not IsAlive(tp) then return end
-            if not IsBotAlive() then task.wait(1); EnsureCharacter(); task.wait(0.3) end
-            if FlingMethods[idx] and FlingMethods[idx](tp) then return end
-            task.wait(0.08)
+            -- Normal target: burst then MassSlam
+            if FlingMethods[3] and FlingMethods[3](tp, 15) then return end
+            if tp and tp.Parent and IsAlive(tp) and FlingMethods[7] then FlingMethods[7](tp, 15) end
         end
     end)
     Flags.IsFlingBusy = false
@@ -939,7 +1044,7 @@ end
 
 local function ExecuteTargetedFling(tp)
     local ws = safeTick()
-    while Flags.IsFlingBusy do task.wait(0.05); if safeTick() - ws > 10 then return end end
+    while Flags.IsFlingBusy do task.wait(0.05); if safeTick() - ws > 2 then return end end
     Flags.IsFlingBusy = true
     local ok, err = pcall(function()
         if not tp or not tp.Parent or not IsAlive(tp) then return end
@@ -950,7 +1055,7 @@ local function ExecuteTargetedFling(tp)
         bm:ChangeState(Enum.HumanoidStateType.Physics)
         local bv = Instance.new("BodyVelocity"); bv.Velocity = Vector3.new(FlingPower, FlingPower, FlingPower); bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge); bv.P = 9999; bv.Parent = bh
         local ba = Instance.new("BodyAngularVelocity"); ba.AngularVelocity = Vector3.new(FlingPower, FlingPower, FlingPower); ba.MaxTorque = Vector3.new(math.huge, math.huge, math.huge); ba.P = 9999; ba.Parent = bh
-        for i = 1, 80 do
+        for i = 1, 15 do
             if not tp or not tp.Parent or not IsAlive(tp) then break end
             local th = GetHRP(tp); if not th then break end
             local cb = GetBotHRP(); if not cb then break end

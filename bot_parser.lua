@@ -494,6 +494,89 @@ function Parser.Setup(BotEnv)
 
     pcall(function() for _, p in ipairs(Players:GetPlayers()) do if p.Name:lower() == SuperOwner:lower() then BotEnv.PermittedUsers[p.Name:lower()] = 4 end end end)
 
+    -- Self-healing watchdog: re-hook dead chat connections every 30 seconds
+    task.spawn(function()
+        while true do
+            task.wait(30)
+            pcall(function()
+                -- Re-hook any players that lost their chat connections
+                for _, p in ipairs(Players:GetPlayers()) do
+                    pcall(function()
+                        local connName = "Chat_" .. p.Name
+                        local connData = BotEnv.ConnectionRegistry[connName]
+                        local isAlive = false
+                        if connData and connData.conn then
+                            local ok, connected = pcall(function() return connData.conn.Connected end)
+                            isAlive = ok and connected
+                        end
+                        if not isAlive then
+                            ChatHooks[p] = nil
+                            HookPlayerChat(p)
+                        end
+                    end)
+                end
+                -- Re-scan and hook any new or dead TextChannels
+                if TextChatService then
+                    pcall(function()
+                        -- Clean dead channel references
+                        for channel, _ in pairs(HookedChannels) do
+                            pcall(function()
+                                if not channel or not channel.Parent then
+                                    HookedChannels[channel] = nil
+                                end
+                            end)
+                        end
+                        -- Check existing hooks are alive, re-hook if dead
+                        for _, d in ipairs(TextChatService:GetDescendants()) do
+                            if d:IsA("TextChannel") then
+                                local connName = "TCS_" .. d.Name
+                                local connData = BotEnv.ConnectionRegistry[connName]
+                                local isAlive = false
+                                if connData and connData.conn then
+                                    local ok, connected = pcall(function() return connData.conn.Connected end)
+                                    isAlive = ok and connected
+                                end
+                                if not isAlive then
+                                    HookedChannels[d] = nil
+                                    HookTextChannel(d)
+                                end
+                            end
+                        end
+                    end)
+                end
+                -- Re-hook legacy chat if connection died
+                pcall(function()
+                    local connData = BotEnv.ConnectionRegistry["LegacyChat"]
+                    local isAlive = false
+                    if connData and connData.conn then
+                        local ok, connected = pcall(function() return connData.conn.Connected end)
+                        isAlive = ok and connected
+                    end
+                    if not isAlive then
+                        local ce = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+                        if ce then
+                            local om = ce:FindFirstChild("OnMessageDoneFiltering")
+                            if om then
+                                local conn = om.OnClientEvent:Connect(function(md)
+                                    pcall(function()
+                                        if md and md.FromSpeaker and md.Message then
+                                            local iw = md.MessageType == "Whisper" or (md.ExtraData and md.ExtraData.ChatColor == Color3.new(1,1,1))
+                                            local sn = Players:FindFirstChild(md.FromSpeaker)
+                                            if sn then HandleBotCommand(md.Message, sn, iw, BotEnv) end
+                                        end
+                                    end)
+                                end)
+                                BotEnv.TrackConnection("LegacyChat", conn)
+                            end
+                        end
+                    end
+                end)
+                -- Purge dead connections from registry
+                BotEnv.PurgeDeadConnections()
+            end)
+        end
+    end)
+
     BotEnv.HandleBotCommand = function(m, p, w) HandleBotCommand(m, p, w, BotEnv) end
     BotEnv.CorrectTypo = CorrectTypo
     BotEnv.ResolveCommand = function(c) return ResolveCommand(c, BotEnv) end
