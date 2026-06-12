@@ -83,18 +83,23 @@ local Console = {}
 Console.History = {}
 Console.MaxHistory = 500
 Console.Categories = {
-    CMD = {color = "🟢", label = "CMD"}, LOAD = {color = "🔵", label = "LOAD"},
-    ERR = {color = "🔴", label = "ERR"}, WARN = {color = "🟡", label = "WARN"},
-    PERM = {color = "🟣", label = "PERM"}, NET = {color = "🌐", label = "NET"},
-    SYS = {color = "⚙️", label = "SYS"}, DBG = {color = "🔧", label = "DBG"},
-    PHY = {color = "⚡", label = "PHY"},
+    CMD = {color = "🟢", label = "CMD", level = 2}, LOAD = {color = "🔵", label = "LOAD", level = 3},
+    ERR = {color = "🔴", label = "ERR", level = 1}, WARN = {color = "🟡", label = "WARN", level = 1},
+    PERM = {color = "🟣", label = "PERM", level = 2}, NET = {color = "🌐", label = "NET", level = 4},
+    SYS = {color = "⚙️", label = "SYS", level = 3}, DBG = {color = "🔧", label = "DBG", level = 4},
+    PHY = {color = "⚡", label = "PHY", level = 4},
 }
+-- LogLevel: 1=errors+warnings only, 2=+commands+perms, 3=+system+load, 4=+debug+network (all)
+Console.LogLevel = 2
 function Console.Log(cat, msg, det)
     local ci = Console.Categories[cat] or Console.Categories.SYS
     local ts = os.date("%H:%M:%S")
     Console.History[#Console.History + 1] = {time = ts, category = cat, message = msg, details = det or "", tick = safeTick()}
     if #Console.History > Console.MaxHistory then table.remove(Console.History, 1) end
-    print(string.format("[%s] %s [%s] %s%s", ts, ci.color, ci.label, msg, det and (" | " .. tostring(det)) or ""))
+    -- Only print if category level meets the log threshold
+    if (ci.level or 3) <= Console.LogLevel then
+        print(string.format("[%s] %s [%s] %s%s", ts, ci.color, ci.label, msg, det and (" | " .. tostring(det)) or ""))
+    end
 end
 function Console.Error(m, d) Console.Log("ERR", m, d) end
 function Console.Warn(m, d) Console.Log("WARN", m, d) end
