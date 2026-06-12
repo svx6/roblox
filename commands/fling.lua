@@ -1,19 +1,19 @@
 return {
     Name = "fling",
-    Aliases = {"fl", "yeet", "launch"},
+    Aliases = {"fl", "launch"},
     Description = "Fling a player using smart method selection",
     Permission = 2,
 
-    Execute = function(args, executor, isWhisper, BotEnv)
-        local targetName = args[1]
+    Execute = function(BotEnv, args, executor, restArgs)
+        local targetName = args[2]
         if not targetName or targetName == "" then
-            BotEnv.RespondError("Usage: fling <player>", isWhisper and executor or nil)
+            BotEnv.RespondError("Usage: fling <player>", nil)
             return
         end
 
         local targets = BotEnv.GetMultipleTargets(targetName, executor)
         if not targets or #targets == 0 then
-            BotEnv.RespondError("Player not found: " .. targetName, isWhisper and executor or nil)
+            BotEnv.RespondError("Player not found: " .. targetName, nil)
             return
         end
 
@@ -23,7 +23,7 @@ return {
 
         for _, target in ipairs(targets) do
             if not BotEnv.IsAlive(target) then
-                BotEnv.RespondError(target.Name .. " is not alive", isWhisper and executor or nil)
+                BotEnv.RespondError(target.Name .. " is not alive", nil)
             else
                 task.spawn(function()
                     local killed = false
@@ -54,5 +54,7 @@ return {
                 end)
             end
         end
+
+        BotEnv.Respond("flinging " .. targetName, nil)
     end,
 }

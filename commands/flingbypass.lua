@@ -24,16 +24,16 @@ return {
     Description = "Fling a player with anti-fling bypass (method 10)",
     Permission = 2,
 
-    Execute = function(args, executor, isWhisper, BotEnv)
-        local targetName = args[1]
+    Execute = function(BotEnv, args, executor, restArgs)
+        local targetName = args[2]
         if not targetName or targetName == "" then
-            BotEnv.RespondError("Usage: flingbypass <player>", isWhisper and executor or nil)
+            BotEnv.RespondError("Usage: flingbypass <player>", nil)
             return
         end
 
         local targets = BotEnv.GetMultipleTargets(targetName, executor)
         if not targets or #targets == 0 then
-            BotEnv.RespondError("Player not found: " .. targetName, isWhisper and executor or nil)
+            BotEnv.RespondError("Player not found: " .. targetName, nil)
             return
         end
 
@@ -95,11 +95,6 @@ return {
                 ba.Parent          = bh
 
                 -- ── Phase 2: Overlap spam at sub-frame rate ─────────────
-                -- We run TWO heartbeat waits per loop iteration to stay ahead
-                -- of the anti-fling's single heartbeat + task.wait(1) cycle.
-                -- The 1-second gap means the target's velocity reset only fires
-                -- once per second — we apply thousands of impulses per second.
-
                 local iterations = 140  -- ~2.3 seconds at 60fps
                 for i = 1, iterations do
                     if not target or not target.Parent then break end
@@ -110,13 +105,8 @@ return {
                     local cb = BotEnv.GetBotHRP()
                     if not cb then break end
 
-                    -- ── Core bypass: AssemblyLinearVelocity not Velocity ──
-                    -- The anti-fling only zeros .Velocity; .AssemblyLinearVelocity
-                    -- is the actual physics velocity and it ignores that reset.
-
                     -- Alternate between direct overlap and tight orbital
                     if i % 4 == 0 then
-                        -- Direct overlap - maximum contact chance
                         cb.CFrame = th.CFrame
                         cb.AssemblyLinearVelocity = Vector3.new(
                             math.random(-1,1) * FlingPower,
@@ -124,7 +114,6 @@ return {
                             math.random(-1,1) * FlingPower
                         )
                     elseif i % 4 == 1 then
-                        -- Tight orbit top/bottom for vertical fling component
                         local ang = i * 1.2
                         cb.CFrame = th.CFrame * CFrame.new(
                             math.cos(ang) * 0.4,
@@ -133,7 +122,6 @@ return {
                         )
                         cb.AssemblyLinearVelocity = (th.Position - cb.Position).Unit * FlingPower
                     elseif i % 4 == 2 then
-                        -- Random micro-jitter — unpredictable for any counter-script
                         cb.CFrame = th.CFrame * CFrame.new(
                             math.random() * 0.6 - 0.3,
                             math.random() * 0.6 - 0.3,
@@ -145,17 +133,14 @@ return {
                             (math.random()-0.5) * FlingPower * 2
                         )
                     else
-                        -- Slam from above — hardest to zero out with BodyPosition
                         cb.CFrame = th.CFrame * CFrame.new(0, 0.5, 0)
                         cb.AssemblyLinearVelocity = Vector3.new(0, -FlingPower, 0)
                     end
 
-                    -- Always apply angular velocity too
                     cb.AssemblyAngularVelocity = Vector3.new(
                         FlingPower, FlingPower, FlingPower
                     )
 
-                    -- Randomise BodyVelocity direction every 6 frames
                     if i % 6 == 0 then
                         bv.Velocity = Vector3.new(
                             math.random(-1,1) * FlingPower,
@@ -169,10 +154,6 @@ return {
                         )
                     end
 
-                    -- ── firetouchinterest bypass ──────────────────────────
-                    -- Anti-fling sets CanCollide = false on the target's HRP,
-                    -- so normal touch events won't fire. firetouchinterest()
-                    -- forces them regardless of CanCollide state.
                     if hasFTI then
                         pcall(function()
                             firetouchinterest(cb, th, 0)
@@ -191,7 +172,6 @@ return {
                         end
                     end
 
-                    -- Keep anti-gravity on ourselves every 10 frames
                     if i % 10 == 0 then
                         pcall(BotEnv.ApplyAntiGravity)
                     end
@@ -241,9 +221,9 @@ return {
             task.spawn(function()
                 local killed = DoBypassFling(target)
                 if killed then
-                    BotEnv.Respond("Bypass fling: " .. target.Name .. " sent", isWhisper and executor or nil, true)
+                    BotEnv.Respond("Bypass fling: " .. target.Name .. " sent", nil, true)
                 else
-                    BotEnv.Respond("Bypass fling: " .. target.Name .. " survived (strong anti-fling)", isWhisper and executor or nil, true)
+                    BotEnv.Respond("Bypass fling: " .. target.Name .. " survived (strong anti-fling)", nil, true)
                 end
             end)
         end

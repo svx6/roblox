@@ -4,8 +4,8 @@ return {
     Description = "Manage fling method selection and view stats",
     Permission = 2,
 
-    Execute = function(args, executor, isWhisper, BotEnv)
-        local sub = (args[1] or ""):lower()
+    Execute = function(BotEnv, args, executor, restArgs)
+        local sub = (args[2] or ""):lower()
 
         -- Initialise stats table once, in a stable upvalue
         -- so all closures below always point to the same object
@@ -56,20 +56,20 @@ return {
         -- ── subcommands ────────────────────────────────────────────
 
         if sub == "set" or sub == "use" then
-            local id = tonumber(args[2])
+            local id = tonumber(args[3])
             if not id then
-                BotEnv.RespondError("Usage: flingmethod set <1-9>", isWhisper and executor or nil)
+                BotEnv.RespondError("Usage: flingmethod set <1-9>", nil)
                 return
             end
             if id < 0 or id > 9 then
-                BotEnv.RespondError("Method must be 0-9 (0 = auto)", isWhisper and executor or nil)
+                BotEnv.RespondError("Method must be 0-9 (0 = auto)", nil)
                 return
             end
             BotEnv.SetFlag("PreferredFlingMethod", id)
             if id == 0 then
-                BotEnv.Respond("Fling method: AUTO (smart pick)", isWhisper and executor or nil, true)
+                BotEnv.Respond("Fling method: AUTO (smart pick)", nil, true)
             else
-                BotEnv.Respond("Fling method set to #" .. id, isWhisper and executor or nil, true)
+                BotEnv.Respond("Fling method set to #" .. id, nil, true)
             end
 
         elseif sub == "stats" or sub == "info" then
@@ -105,7 +105,7 @@ return {
             end
             local preferred = BotEnv.GetFlag("PreferredFlingMethod") or 0
             lines[#lines+1] = "Current preference: " .. (preferred > 0 and ("#" .. preferred) or "AUTO")
-            BotEnv.Respond(table.concat(lines, "\n"), isWhisper and executor or nil, true)
+            BotEnv.Respond(table.concat(lines, "\n"), nil, true)
 
         elseif sub == "reset" or sub == "clear" then
             -- Wipe in-place so all closures keep pointing at the same table object
@@ -114,23 +114,23 @@ return {
             S.lastId   = 0
             S.lastKill = false
             BotEnv.SetFlag("PreferredFlingMethod", 0)
-            BotEnv.Respond("Fling stats cleared, method reset to AUTO", isWhisper and executor or nil, true)
+            BotEnv.Respond("Fling stats cleared, method reset to AUTO", nil, true)
 
         elseif sub == "auto" then
             BotEnv.SetFlag("PreferredFlingMethod", 0)
-            BotEnv.Respond("Fling method: AUTO", isWhisper and executor or nil, true)
+            BotEnv.Respond("Fling method: AUTO", nil, true)
 
         elseif sub == "best" then
             if not BotEnv._FlingHasData() then
-                BotEnv.Respond("Not enough data yet (need 5+ attempts)", isWhisper and executor or nil, true)
+                BotEnv.Respond("Not enough data yet (need 5+ attempts)", nil, true)
                 return
             end
             local bestId, bestRatio = BotEnv._FlingSmartPick()
             if bestId > 0 then
                 BotEnv.SetFlag("PreferredFlingMethod", bestId)
-                BotEnv.Respond("Set to best method #" .. bestId .. " (" .. math.floor(bestRatio*100) .. "% kill rate)", isWhisper and executor or nil, true)
+                BotEnv.Respond("Set to best method #" .. bestId .. " (" .. math.floor(bestRatio*100) .. "% kill rate)", nil, true)
             else
-                BotEnv.Respond("No clear winner yet, staying on AUTO", isWhisper and executor or nil, true)
+                BotEnv.Respond("No clear winner yet, staying on AUTO", nil, true)
             end
 
         else
@@ -138,7 +138,7 @@ return {
             local preferred = BotEnv.GetFlag("PreferredFlingMethod") or 0
             local msg = "Fling method: " .. (preferred > 0 and ("#" .. preferred) or "AUTO")
             msg = msg .. "\nSubs: set <n> | stats | reset | auto | best"
-            BotEnv.Respond(msg, isWhisper and executor or nil, true)
+            BotEnv.Respond(msg, nil, true)
         end
     end,
 }

@@ -4,13 +4,12 @@ return {
     Description = "Auto-join a player across servers. Usage: autojoin <player> | off | status | retry",
     Permission = 3,
 
-    Execute = function(args, executor, isWhisper, BotEnv)
-        -- ── Reply helpers (correct whisper routing) ──────────────────────
-        local wt = isWhisper and executor or nil
-        local function Reply(msg) BotEnv.Respond(msg, wt, true) end
-        local function Err(msg)   BotEnv.RespondError(msg, wt) end
+    Execute = function(BotEnv, args, executor, restArgs)
+        -- ── Reply helpers ──────────────────────────────────────────
+        local function Reply(msg) BotEnv.Respond(msg, nil, true) end
+        local function Err(msg)   BotEnv.RespondError(msg, nil) end
 
-        local sub = (args[1] or ""):lower()
+        local sub = (args[2] or ""):lower()
 
         -- ── No arg: toggle off if running, else show usage ───────────────
         if sub == "" then
@@ -76,7 +75,7 @@ return {
         end
 
         -- ── START for a named player ─────────────────────────────────────
-        local targetName = args[1]
+        local targetName = args[2]
 
         -- Snap to exact casing if player is already in our server
         local inServer = BotEnv.GetSmartTarget(targetName, executor, true)
