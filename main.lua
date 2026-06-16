@@ -42,7 +42,7 @@ local function LoadGameModule(fileName, BotEnv)
 end
 
 print("╔══════════════════════════════════════════════════════════╗")
-print("║  ULTRA-PERFORMANCE ENGINE v11.0                        ║")
+print("║  ME-LUKE ENGINE v11.0                        ║")
 print("║  Anti-Gravity Physics | Leak-Proof GC | MM2 Support    ║")
 print("║  Exponential Backoff HTTP | Ring-Buffer Dedup          ║")
 print("╚══════════════════════════════════════════════════════════╝")
