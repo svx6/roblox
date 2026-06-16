@@ -223,6 +223,7 @@ local Flags = {
     IsMagnetOn = false, IsAntiSlow = false, IsAntiFling = false, IsLoopTP = false,
     IsAutoShoot = false, IsAutoMurd = false, IsWallBang = false, IsAutoRespawn = false,
     IsAutoJoin = false, IsDestroyServer = false, PreferredFlingMethod = 0, PhysicsStabilizerActive = false,
+    IsBouncing = false, IsShaking = false, IsDizzy = false, IsPushing = false, IsHaunting = false,
     -- Object/reference flags
     FloorFlyTarget = nil, FloorFlyPlatform = nil, TrackTarget = nil, TrackLastPos = nil,
     LoopTPTarget = nil, AutoShootTarget = nil, AutoMurdTarget = nil, AutoJoinTarget = nil,
@@ -580,6 +581,11 @@ local function StopAllLoops()
     Flags.IsAuraActive = false; Flags.IsTracking = false; Flags.IsMagnetOn = false; Flags.IsLoopTP = false
     Flags.IsAutoShoot = false; Flags.IsAutoMurd = false; Flags.IsWallBang = false; Flags.IsFlingBusy = false; Flags.IsDestroyServer = false
     Flags.LoopTPTarget = nil; Flags.AutoShootTarget = nil; Flags.AutoMurdTarget = nil; Flags.TrackTarget = nil
+    -- Troll command flags (bounce, shake, dizzy, push, haunt)
+    Flags.IsBouncing = false; Flags.IsShaking = false; Flags.IsDizzy = false
+    Flags.IsPushing = false; Flags.IsHaunting = false
+    Flags.BounceTarget = nil; Flags.ShakeTarget = nil; Flags.DizzyTarget = nil
+    Flags.PushTarget = nil; Flags.HauntTarget = nil
     for _, pt in ipairs(CageParts) do pcall(function() pt:Destroy() end) end; CageParts = {}
     for _, pt in ipairs(TrailParts) do pcall(function() pt:Destroy() end) end; TrailParts = {}
     for _, pt in ipairs(AuraParts) do pcall(function() pt:Destroy() end) end; AuraParts = {}

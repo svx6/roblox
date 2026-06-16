@@ -90,6 +90,16 @@ local TypoCorrections = {
     autoreport="report",massreport="report",masrep="report",massrep="report",
     reportall="report",loopreport="report",autoban="report",
     ajstatus="autojoin",ajstat="autojoin",autojnstatus="autojoin",
+    -- bounce
+    bouncd="bounce",bounse="bounce",bonce="bounce",bounce1="bounce",bounc="bounce",lnch="bounce",launche="bounce",lauch="bounce",lanch="bounce",
+    -- shake
+    shke="shake",shak="shake",shakee="shake",shaek="shake",jitr="jitter",jiter="jitter",jittr="jitter",
+    -- dizzy
+    dzy="dizzy",dizz="dizzy",dizy="dizzy",dizi="dizzy",dizyes="dizzy",whril="whirl",wirl="whirl",wirl1="whirl",
+    -- push
+    psh="push",pussh="push",puhs="push",puh="push",shov="shove",shvoe="shove",shovee="shove",shvee="shove",
+    -- haunt
+    hant="haunt",haun="haunt",hauntt="haunt",hanut="haunt",gohst="ghost",ghst="ghost",ghoost="ghost",stlk="stalk",stalck="stalk",stalke="stalk",
 }
 
 local function CorrectTypo(cmd) return TypoCorrections[cmd] or cmd end
