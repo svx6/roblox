@@ -42,7 +42,7 @@ local function LoadGameModule(fileName, BotEnv)
 end
 
 print("╔══════════════════════════════════════════════════════════╗")
-print("║  ME-LUKE ENGINE v11.0                        ║")
+print("║  ULTRA-PERFORMANCE ENGINE v11.0                        ║")
 print("║  Anti-Gravity Physics | Leak-Proof GC | MM2 Support    ║")
 print("║  Exponential Backoff HTTP | Ring-Buffer Dedup          ║")
 print("╚══════════════════════════════════════════════════════════╝")
@@ -66,6 +66,15 @@ task.spawn(function()
         mm2.Setup(BotEnv)
         BotEnv.GameModules.MM2 = mm2
         print("[MAIN] MM2 module loaded")
+    end
+end)
+
+task.spawn(function()
+    local dahood = LoadGameModule("dahood.lua", BotEnv)
+    if dahood and dahood.Setup then
+        dahood.Setup(BotEnv)
+        BotEnv.GameModules.DaHood = dahood
+        print("[MAIN] Da Hood module loaded")
     end
 end)
 
