@@ -1,193 +1,212 @@
 --[[
     Command: auramode
-    Category: aura
+    Category: fx
     Permission: 1
-    Usage: ?bot auramode
-    Aliases: modeaura, botaura, glowmode, auraall
-    Description: Toggle FULL AURA bot mode — ALL effects simultaneously:
-                 rainbow particles, spinning orbit ring, floating crown orbs,
-                 and aura glow trail all active at once. Gojo Satoru vibes.
+    Usage: ?bot auramode <player>
+    Aliases: gojo, shadow, domain, gojomode, shadowmode, domainexpansion, infinity
+    Description: GOJO SHADOW STANCE — bot locks 2.5 studs directly behind the
+                 target player, matching their exact orientation (like Gojo
+                 standing behind Yuji). Triggers a Domain Expansion void burst
+                 on activation. Type again or without args to stop.
 ]]
 
 return {
-    Name = "auramode",
-    Category = "aura",
-    Permission = 1,
-    Aliases = {"modeaura", "botaura", "glowmode", "auraall", "auraon"},
-    Description = "Toggle FULL Gojo aura mode (orbit ring + crown orbs + sparkle trail — all at once)",
+    Name        = "auramode",
+    Category    = "fx",
+    Permission  = 1,
+    Aliases     = {"gojo", "shadow", "domain", "gojomode", "shadowmode", "domainexpansion", "infinity", "auraall", "modeaura", "botaura", "glowmode"},
+    Description = "Gojo Shadow Stance — bot follows 2.5 studs behind target like Gojo (toggle)",
     Execute = function(BotEnv, args, executor, restArgs)
-        local isOn = BotEnv.GetFlag("IsAuraModeOn")
+        local isOn = BotEnv.GetFlag("IsGojoShadow")
 
-        -- ─── OFF ────────────────────────────────────────────────────────────────
+        -- ─── OFF ──────────────────────────────────────────────────────────────
         if isOn then
-            BotEnv.SetFlag("IsAuraModeOn", false)
-            BotEnv.DisconnectSafe("AuraMode_Orbit")
-            BotEnv.DisconnectSafe("AuraMode_Crown")
-            BotEnv.DisconnectSafe("AuraMode_Rain")
-            BotEnv.DisconnectSafe("AuraMode_Trail")
+            BotEnv.SetFlag("IsGojoShadow", false)
+            BotEnv.SetFlag("GojoTarget", nil)
+            BotEnv.DisconnectSafe("GojoShadow_Follow")
+            BotEnv.DisconnectSafe("GojoShadow_FX")
 
-            -- destroy every aura part we spawned
-            if BotEnv.AuraModeParts then
-                for _, p in ipairs(BotEnv.AuraModeParts) do
+            if BotEnv.GojoFXParts then
+                for _, p in ipairs(BotEnv.GojoFXParts) do
                     pcall(function() p:Destroy() end)
                 end
-                BotEnv.AuraModeParts = {}
+                BotEnv.GojoFXParts = {}
             end
 
-            BotEnv.Respond("🌑 Aura Mode OFF")
+            BotEnv.Respond("🌑 Gojo Shadow OFF")
             return
         end
 
-        -- ─── ON ─────────────────────────────────────────────────────────────────
-        BotEnv.SetFlag("IsAuraModeOn", true)
-        BotEnv.AuraModeParts = BotEnv.AuraModeParts or {}
+        -- Resolve target — args[2] or last used target
+        local targetName = args[2]
+        local target
+        if targetName then
+            target = BotEnv.GetSmartTarget(targetName, executor)
+            if not target then
+                BotEnv.RespondError("Can't find player: " .. targetName)
+                return
+            end
+        else
+            -- no arg: try executor as default target
+            target = executor
+        end
 
-        local ws   = game:GetService("Workspace")
-        local t    = 0
-        local ORBS = 12   -- orbit ring orbs
-        local CROWN = 6   -- crown orbs above head
+        local botHRP = BotEnv.GetBotHRP()
+        if not botHRP then BotEnv.RespondError("Bot character not loaded"); return end
 
-        -- helper: make a neon ball
-        local function MakeBall(size, name)
+        -- ─── ON ───────────────────────────────────────────────────────────────
+        BotEnv.SetFlag("IsGojoShadow", true)
+        BotEnv.SetFlag("GojoTarget", target)
+        BotEnv.GojoFXParts = {}
+        local ws = game:GetService("Workspace")
+
+        -- ── Domain Expansion intro: void sphere blasts outward then shrinks ────
+        task.spawn(function()
+            pcall(function()
+                -- Phase 1: expand a dark sphere from bot position
+                local void = Instance.new("Part")
+                void.Size        = Vector3.new(0.1, 0.1, 0.1)
+                void.Shape       = Enum.PartType.Ball
+                void.Material    = Enum.Material.Neon
+                void.Color       = Color3.new(0.02, 0, 0.08)   -- near-black purple
+                void.Transparency = 0.0
+                void.CanCollide  = false
+                void.Anchored    = true
+                void.CastShadow  = false
+                void.Name        = "GojoVoid"
+                void.Parent      = ws
+                local hrp = BotEnv.GetBotHRP()
+                if hrp then void.Position = hrp.Position end
+
+                -- Expand to 40 studs
+                for step = 1, 20 do
+                    task.wait(0.025)
+                    if not (void and void.Parent) then break end
+                    local s = step * 2
+                    void.Size = Vector3.new(s, s, s)
+                    void.Transparency = step / 20 * 0.95
+                    void.Color = Color3.fromHSV(0.78, 1, math.clamp(step / 20, 0, 1))
+                end
+
+                -- Shockwave rings bursting outward (3 rings, staggered)
+                for r = 1, 3 do
+                    task.wait(0.08)
+                    task.spawn(function()
+                        if not BotEnv.GetFlag("IsGojoShadow") then return end
+                        local ring = Instance.new("Part")
+                        ring.Size        = Vector3.new(1, 0.06, 1)
+                        ring.Material    = Enum.Material.Neon
+                        ring.CanCollide  = false
+                        ring.Anchored    = true
+                        ring.CastShadow  = false
+                        ring.Transparency = 0.1
+                        ring.Color       = Color3.fromHSV(0.78 + r * 0.05, 1, 1)
+                        local h2 = BotEnv.GetBotHRP()
+                        ring.CFrame = h2 and CFrame.new(h2.Position) or CFrame.new(0, 0, 0)
+                        ring.Name  = "GojoRing" .. r
+                        ring.Parent = ws
+
+                        for step = 1, 28 do
+                            task.wait(0.02)
+                            if not (ring and ring.Parent) then break end
+                            local s = step * 1.3
+                            ring.Size = Vector3.new(s, 0.05, s)
+                            ring.Transparency = step / 28
+                        end
+                        pcall(function() if ring and ring.Parent then ring:Destroy() end end)
+                    end)
+                end
+
+                pcall(function() if void and void.Parent then void:Destroy() end end)
+            end)
+        end)
+
+        -- ── Persistent FX: 3 vertical "cursed energy" rings at different planes
+        local function MakePlaneRing(name)
             local p = Instance.new("Part")
-            p.Size        = Vector3.new(size, size, size)
-            p.Shape       = Enum.PartType.Ball
+            p.Size        = Vector3.new(4, 0.05, 4)
             p.Material    = Enum.Material.Neon
             p.CanCollide  = false
             p.Anchored    = true
             p.CastShadow  = false
-            p.Transparency = 0.15
-            p.Name        = name or "AuraModeOrb"
+            p.Transparency = 0.55
+            p.Color       = Color3.fromHSV(0.78, 1, 1)
+            p.Name        = name
             p.Parent      = ws
-            BotEnv.AuraModeParts[#BotEnv.AuraModeParts + 1] = p
+            BotEnv.GojoFXParts[#BotEnv.GojoFXParts + 1] = p
             return p
         end
 
-        -- ── Layer 1: outer orbit ring (12 large orbs) ────────────────────────
-        local orbitOrbs = {}
-        for i = 1, ORBS do
-            orbitOrbs[i] = MakeBall(0.7, "AuraOrbit" .. i)
-        end
+        local ring1 = MakePlaneRing("GojoPlane1")  -- horizontal disc
+        local ring2 = MakePlaneRing("GojoPlane2")  -- 90° tilt
+        local ring3 = MakePlaneRing("GojoPlane3")  -- 45° tilt
+        local fxT   = 0
 
-        -- ── Layer 2: inner crown (6 small orbs above head) ──────────────────
-        local crownOrbs = {}
-        for i = 1, CROWN do
-            crownOrbs[i] = MakeBall(0.4, "AuraCrown" .. i)
-        end
-
-        -- ── Layer 3: rain sparkle trail parts ───────────────────────────────
-        local rainParts = {}
-        local MAX_RAIN = 60
-        local lastRainPos = nil
-
-        -- ── Orbit + crown loop ───────────────────────────────────────────────
-        local orbitConn = BotEnv.RunService.Heartbeat:Connect(function(dt)
+        -- FX loop: spinning rings around bot
+        local fxConn = BotEnv.RunService.Heartbeat:Connect(function(dt)
             pcall(function()
-                if not BotEnv.GetFlag("IsAuraModeOn") then
-                    BotEnv.DisconnectSafe("AuraMode_Orbit")
-                    return
+                if not BotEnv.GetFlag("IsGojoShadow") then
+                    BotEnv.DisconnectSafe("GojoShadow_FX"); return
                 end
-                t = t + dt
+                fxT = fxT + dt
                 local hrp = BotEnv.GetBotHRP()
                 if not hrp then return end
-                local pos = hrp.Position
+                local pos = hrp.Position + Vector3.new(0, 0.8, 0)
 
-                -- outer orbit (slow spiral in XZ, gentle Y bob)
-                for i, orb in ipairs(orbitOrbs) do
-                    if orb and orb.Parent then
-                        local a   = t * 2.2 + (i / ORBS) * math.pi * 2
-                        local r   = 4.5 + math.sin(t * 1.1 + i * 0.6) * 0.8
-                        local y   = math.sin(t * 3   + i * 0.9) * 1.8
-                        orb.Position = pos + Vector3.new(
-                            math.cos(a) * r,
-                            y,
-                            math.sin(a) * r
-                        )
-                        -- rainbow colour per orb, cycling over time
-                        orb.Color = Color3.fromHSV(((t * 0.12 + i / ORBS)) % 1, 1, 1)
-                        orb.Size  = Vector3.new(
-                            0.7 + math.sin(t * 4 + i) * 0.15,
-                            0.7 + math.sin(t * 4 + i) * 0.15,
-                            0.7 + math.sin(t * 4 + i) * 0.15
-                        )
-                    end
+                local sz = 4.2 + math.sin(fxT * 2) * 0.5
+
+                -- ring1: horizontal (XZ plane), slow spin — use CFrame.Angles
+                if ring1 and ring1.Parent then
+                    ring1.CFrame = CFrame.new(pos) * CFrame.Angles(0, fxT * 1.2, 0)
+                    ring1.Size   = Vector3.new(sz, 0.04, sz)
+                    ring1.Color  = Color3.fromHSV((0.78 + fxT * 0.04) % 1, 1, 1)
                 end
-
-                -- crown orbs (faster spin, above head)
-                for i, orb in ipairs(crownOrbs) do
-                    if orb and orb.Parent then
-                        local a   = t * 4.5 + (i / CROWN) * math.pi * 2
-                        local r   = 1.8 + math.sin(t * 5 + i) * 0.3
-                        local yOff = 3.2 + math.abs(math.sin(t * 6 + i * 1.1)) * 0.5
-                        orb.Position = pos + Vector3.new(
-                            math.cos(a) * r,
-                            yOff,
-                            math.sin(a) * r
-                        )
-                        orb.Color = Color3.fromHSV(((t * 0.25 + i / CROWN + 0.5)) % 1, 1, 1)
-                    end
+                -- ring2: vertical (YZ plane), opposite spin
+                if ring2 and ring2.Parent then
+                    ring2.CFrame = CFrame.new(pos) * CFrame.Angles(math.pi / 2, -fxT * 0.9, 0)
+                    ring2.Size   = Vector3.new(sz * 0.85, 0.04, sz * 0.85)
+                    ring2.Color  = Color3.fromHSV((0.82 + fxT * 0.04) % 1, 1, 1)
+                end
+                -- ring3: diagonal
+                if ring3 and ring3.Parent then
+                    ring3.CFrame = CFrame.new(pos) * CFrame.Angles(math.pi / 4, fxT * 1.5, math.pi / 4)
+                    ring3.Size   = Vector3.new(sz * 0.70, 0.04, sz * 0.70)
+                    ring3.Color  = Color3.fromHSV((0.74 + fxT * 0.06) % 1, 1, 1)
                 end
             end)
         end)
-        BotEnv.TrackConnection("AuraMode_Orbit", orbitConn)
+        BotEnv.TrackConnection("GojoShadow_FX", fxConn)
 
-        -- ── Rain/trail loop ──────────────────────────────────────────────────
-        local trailConn = BotEnv.RunService.Heartbeat:Connect(function()
+        -- ── Shadow Follow: lock bot 2.5 studs behind target every frame ───────
+        local OFFSET   = 2.5   -- studs behind target
+        local OFFSET_Y = 0     -- same vertical level
+
+        local followConn = BotEnv.RunService.Heartbeat:Connect(function()
             pcall(function()
-                if not BotEnv.GetFlag("IsAuraModeOn") then
-                    BotEnv.DisconnectSafe("AuraMode_Trail")
+                if not BotEnv.GetFlag("IsGojoShadow") then
+                    BotEnv.DisconnectSafe("GojoShadow_Follow"); return
+                end
+
+                local t = BotEnv.GetFlag("GojoTarget")
+                if not t or not t.Parent then
+                    BotEnv.SetFlag("IsGojoShadow", false)
+                    BotEnv.DisconnectSafe("GojoShadow_Follow")
+                    BotEnv.DisconnectSafe("GojoShadow_FX")
                     return
                 end
-                local hrp = BotEnv.GetBotHRP()
-                if not hrp then return end
 
-                -- spawn sparkle if moved
-                if not lastRainPos or (hrp.Position - lastRainPos).Magnitude > 2 then
-                    lastRainPos = hrp.Position
+                local tHRP = BotEnv.GetHRP(t)
+                local bHRP = BotEnv.GetBotHRP()
+                if not tHRP or not bHRP then return end
 
-                    -- tiny sparkle at feet
-                    local spark = Instance.new("Part")
-                    spark.Size        = Vector3.new(0.2, 0.2, 0.2)
-                    spark.Shape       = Enum.PartType.Ball
-                    spark.Material    = Enum.Material.Neon
-                    spark.CanCollide  = false
-                    spark.Anchored    = true
-                    spark.CastShadow  = false
-                    spark.Transparency = 0.25
-                    spark.Color        = Color3.fromHSV(math.random(), 1, 1)
-                    spark.Position     = hrp.Position - Vector3.new(0, 2.8, 0)
-                    spark.Name         = "AuraRain"
-                    spark.Parent       = ws
-                    rainParts[#rainParts + 1] = spark
-                    BotEnv.AuraModeParts[#BotEnv.AuraModeParts + 1] = spark
-
-                    -- fade and destroy after 3s
-                    task.delay(3, function()
-                        pcall(function()
-                            for step = 1, 15 do
-                                task.wait(0.2)
-                                if spark and spark.Parent then
-                                    spark.Transparency = spark.Transparency + 0.05
-                                end
-                            end
-                            if spark and spark.Parent then spark:Destroy() end
-                        end)
-                    end)
-
-                    -- keep rain list capped
-                    if #rainParts > MAX_RAIN then
-                        pcall(function()
-                            if rainParts[1] and rainParts[1].Parent then
-                                rainParts[1]:Destroy()
-                            end
-                        end)
-                        table.remove(rainParts, 1)
-                    end
-                end
+                -- Positive Z in CFrame local space = directly behind
+                -- Multiply target CFrame by offset so we inherit their rotation
+                local shadowCF = tHRP.CFrame * CFrame.new(0, OFFSET_Y, OFFSET)
+                bHRP.CFrame = shadowCF
             end)
         end)
-        BotEnv.TrackConnection("AuraMode_Trail", trailConn)
+        BotEnv.TrackConnection("GojoShadow_Follow", followConn)
 
-        BotEnv.Respond("✨ Aura Mode ON — orbit ring + crown + sparkle trail active!")
+        BotEnv.Respond("🌀 DOMAIN EXPANSION — shadowing " .. target.Name .. " | ?bot auramode to stop")
     end,
 }

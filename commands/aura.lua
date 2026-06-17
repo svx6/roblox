@@ -1,192 +1,241 @@
 --[[
     Command: aura
-    Category: aura
+    Category: fx
     Permission: 1
     Usage: ?bot aura
-    Aliases: unaura, glow, gojoaura, sixeyes, limitless, infinity
-    Description: Toggle the GOJO Six Eyes / Limitless aura —
-                 void-blue & purple lightning orbs, infinity ring,
-                 domain expansion particle burst, and cursed energy trail.
+    Aliases: storm, electric, discharge, shock, staticstorm, voltage
+    Description: ELECTRIC STORM — crackling lightning arcs shoot from the bot,
+                 shockwave rings pulse outward from the feet, and a blazing
+                 energy core throbs at the chest. Zero orbit balls.
 ]]
 
 return {
     Name = "aura",
-    Category = "aura",
+    Category = "fx",
     Permission = 1,
-    Aliases = {"unaura", "glow", "gojoaura", "sixeyes", "limitless", "infinity"},
-    Description = "Toggle GOJO Six Eyes aura (void rings + lightning orbs + cursed energy trail)",
+    Aliases = {"storm", "electric", "discharge", "shock", "staticstorm", "voltage", "glow"},
+    Description = "Electric Storm FX — lightning arcs + shockwave rings + energy core",
     Execute = function(BotEnv, args, executor, restArgs)
         local isOn = BotEnv.GetFlag("IsAuraActive")
 
-        -- ─── OFF ────────────────────────────────────────────────────────────────
+        -- ─── OFF ──────────────────────────────────────────────────────────────
         if isOn then
             BotEnv.SetFlag("IsAuraActive", false)
-            BotEnv.DisconnectSafe("Aura_Orbs")
-            BotEnv.DisconnectSafe("Aura_Trail")
+            BotEnv.DisconnectSafe("Aura_Core")
+            BotEnv.DisconnectSafe("Aura_Rings")
             for _, pt in ipairs(BotEnv.AuraParts) do
                 pcall(function() pt:Destroy() end)
             end
             BotEnv.AuraParts = {}
-            BotEnv.Respond("🌑 Six Eyes OFF")
+            BotEnv.Respond("⚡ Electric Storm OFF")
             return
         end
 
-        -- ─── ON ─────────────────────────────────────────────────────────────────
+        -- ─── ON ───────────────────────────────────────────────────────────────
         BotEnv.SetFlag("IsAuraActive", true)
-        BotEnv.AuraParts = BotEnv.AuraParts or {}
+        BotEnv.AuraParts = {}
         local ws = game:GetService("Workspace")
+
+        -- ── Energy Core: single pulsing sphere at torso ───────────────────────
+        local core = Instance.new("Part")
+        core.Size        = Vector3.new(1, 1, 1)
+        core.Shape       = Enum.PartType.Ball
+        core.Material    = Enum.Material.Neon
+        core.CanCollide  = false
+        core.Anchored    = true
+        core.CastShadow  = false
+        core.Color       = Color3.new(0.4, 0.9, 1)   -- electric cyan
+        core.Transparency = 0.0
+        core.Name        = "ElectricCore"
+        core.Parent      = ws
+        BotEnv.AuraParts[#BotEnv.AuraParts + 1] = core
+
+        -- ── Lightning Arcs: 10 thin bolts pointing to random targets ─────────
+        local NUM_ARCS = 10
+        local arcs = {}
+        for i = 1, NUM_ARCS do
+            local a = Instance.new("Part")
+            a.Size        = Vector3.new(0.07, 0.07, 1)
+            a.Material    = Enum.Material.Neon
+            a.CanCollide  = false
+            a.Anchored    = true
+            a.CastShadow  = false
+            a.Color       = Color3.new(1, 1, 1)
+            a.Transparency = 0
+            a.Name        = "LightningArc" .. i
+            a.Parent      = ws
+            arcs[i] = a
+            BotEnv.AuraParts[#BotEnv.AuraParts + 1] = a
+        end
+
+        -- ── Main loop: core pulse + arc flicker ──────────────────────────────
         local t = 0
+        local arcTimer = 0
+        local ARC_TICK = 0.045  -- update arcs every 45ms → visible flicker
 
-        -- Gojo colour palette: deep-blue (#0ff / #7f00ff / #ff00ff) neon
-        local GojoHues = {0.62, 0.75, 0.82, 0.55, 0.90} -- blue→purple→magenta band
-
-        local function MakeOrb(size, name)
-            local p = Instance.new("Part")
-            p.Size        = Vector3.new(size, size, size)
-            p.Shape       = Enum.PartType.Ball
-            p.Material    = Enum.Material.Neon
-            p.CanCollide  = false
-            p.Anchored    = true
-            p.CastShadow  = false
-            p.Transparency = 0.10
-            p.Name        = name or "GojoPart"
-            p.Parent      = ws
-            BotEnv.AuraParts[#BotEnv.AuraParts + 1] = p
-            return p
-        end
-
-        -- ── Layer 1: Outer void ring — 14 large orbs ──────────────────────────
-        local OUTER = 14
-        local outerOrbs = {}
-        for i = 1, OUTER do
-            outerOrbs[i] = MakeOrb(0.75, "GojoOuter" .. i)
-        end
-
-        -- ── Layer 2: Inner infinity ring — 8 medium orbs (counter-spin) ───────
-        local INNER = 8
-        local innerOrbs = {}
-        for i = 1, INNER do
-            innerOrbs[i] = MakeOrb(0.45, "GojoInner" .. i)
-        end
-
-        -- ── Layer 3: Crown — 6 small orbs above head ──────────────────────────
-        local CROWN = 6
-        local crownOrbs = {}
-        for i = 1, CROWN do
-            crownOrbs[i] = MakeOrb(0.30, "GojoCrown" .. i)
-        end
-
-        -- ── Main orbit loop ───────────────────────────────────────────────────
-        local orbConn = BotEnv.RunService.Heartbeat:Connect(function(dt)
+        local coreConn = BotEnv.RunService.Heartbeat:Connect(function(dt)
             pcall(function()
                 if not BotEnv.GetFlag("IsAuraActive") then
-                    BotEnv.DisconnectSafe("Aura_Orbs"); return
+                    BotEnv.DisconnectSafe("Aura_Core")
+                    return
                 end
                 t = t + dt
                 local hrp = BotEnv.GetBotHRP()
                 if not hrp then return end
                 local pos = hrp.Position
 
-                -- Outer void ring — slow, large radius, Y-bob
-                for i, orb in ipairs(outerOrbs) do
-                    if orb and orb.Parent then
-                        local a   = t * 1.8 + (i / OUTER) * math.pi * 2
-                        local r   = 5.0 + math.sin(t * 0.9 + i * 0.5) * 0.9
-                        local y   = math.sin(t * 2.5 + i * 0.7) * 2.2
-                        orb.Position = pos + Vector3.new(math.cos(a)*r, y, math.sin(a)*r)
-                        -- Gojo blue-purple-magenta colour wave
-                        local hue = (GojoHues[(i % #GojoHues) + 1] + t * 0.05) % 1
-                        orb.Color = Color3.fromHSV(hue, 1, 1)
-                        local sz  = 0.75 + math.sin(t * 5 + i) * 0.18
-                        orb.Size  = Vector3.new(sz, sz, sz)
-                    end
+                -- Core: sit at mid-torso, pulse in size, cycle hue (cyan→white→yellow)
+                if core and core.Parent then
+                    local pulse = 0.55 + math.abs(math.sin(t * 8)) * 0.70
+                    core.Size     = Vector3.new(pulse, pulse, pulse)
+                    core.Position = pos + Vector3.new(0, 0.5, 0)
+                    local hPulse = (0.54 + math.sin(t * 3) * 0.06) % 1  -- cyan flicker
+                    core.Color    = Color3.fromHSV(hPulse, 0.8, 1)
+                    core.Transparency = 0.05 + math.abs(math.sin(t * 12)) * 0.25
                 end
 
-                -- Inner infinity ring — faster counter-spin
-                for i, orb in ipairs(innerOrbs) do
-                    if orb and orb.Parent then
-                        local a   = -(t * 3.2) + (i / INNER) * math.pi * 2
-                        local r   = 2.8 + math.sin(t * 2 + i * 0.8) * 0.5
-                        local y   = math.cos(t * 4 + i * 1.2) * 1.5
-                        orb.Position = pos + Vector3.new(math.cos(a)*r, y, math.sin(a)*r)
-                        local hue = (0.62 + t * 0.12 + i / INNER * 0.3) % 1
-                        orb.Color = Color3.fromHSV(hue, 1, 1)
-                    end
-                end
-
-                -- Crown — fast spin above head
-                for i, orb in ipairs(crownOrbs) do
-                    if orb and orb.Parent then
-                        local a    = t * 6.0 + (i / CROWN) * math.pi * 2
-                        local r    = 1.6 + math.sin(t * 7 + i) * 0.25
-                        local yOff = 3.5 + math.abs(math.sin(t * 8 + i * 1.3)) * 0.6
-                        orb.Position = pos + Vector3.new(math.cos(a)*r, yOff, math.sin(a)*r)
-                        orb.Color    = Color3.fromHSV((0.75 + t * 0.2 + i / CROWN) % 1, 1, 1)
+                -- Arc flicker: every ARC_TICK, repoint all arcs to new random targets
+                arcTimer = arcTimer + dt
+                if arcTimer >= ARC_TICK then
+                    arcTimer = 0
+                    for i, arc in ipairs(arcs) do
+                        if arc and arc.Parent then
+                            -- random endpoint around the character
+                            local rx = (math.random() - 0.5) * 11
+                            local ry = (math.random() - 0.5) * 7
+                            local rz = (math.random() - 0.5) * 11
+                            local target = pos + Vector3.new(rx, ry, rz)
+                            local origin = pos + Vector3.new(0, 0.5, 0)
+                            local dir    = target - origin
+                            local len    = dir.Magnitude
+                            if len > 0.1 then
+                                arc.Size  = Vector3.new(0.055, 0.055, len)
+                                arc.CFrame = CFrame.new(origin + dir * 0.5, target)
+                            end
+                            -- flicker on/off + colour shift
+                            local roll = math.random()
+                            if roll < 0.35 then
+                                arc.Transparency = 1  -- invisible frame (flicker)
+                            elseif roll < 0.65 then
+                                arc.Color = Color3.new(1, 1, 1); arc.Transparency = 0
+                            elseif roll < 0.85 then
+                                arc.Color = Color3.fromHSV(0.55, 1, 1); arc.Transparency = 0.1
+                            else
+                                arc.Color = Color3.fromHSV(0.12, 1, 1); arc.Transparency = 0.2  -- hot yellow
+                            end
+                        end
                     end
                 end
             end)
         end)
-        BotEnv.TrackConnection("Aura_Orbs", orbConn)
+        BotEnv.TrackConnection("Aura_Core", coreConn)
 
-        -- ── Cursed energy trail (sparks when moving) ──────────────────────────
-        local trailParts = {}
-        local MAX_TRAIL  = 50
-        local lastPos    = nil
-        local trailHue   = 0.62
+        -- ── Shockwave rings: spawn one every 0.45s ────────────────────────────
+        local ringTimer  = 0
+        local RING_INT   = 0.45
+        local ringHue    = 0.55
+        local ringConn
 
-        local trailConn = BotEnv.RunService.Heartbeat:Connect(function()
+        ringConn = BotEnv.RunService.Heartbeat:Connect(function(dt)
             pcall(function()
                 if not BotEnv.GetFlag("IsAuraActive") then
-                    BotEnv.DisconnectSafe("Aura_Trail"); return
+                    BotEnv.DisconnectSafe("Aura_Rings")
+                    return
+                end
+                ringTimer = ringTimer + dt
+                if ringTimer < RING_INT then return end
+                ringTimer = 0
+
+                local hrp = BotEnv.GetBotHRP()
+                if not hrp then return end
+                local spawnPos = hrp.Position - Vector3.new(0, 2.8, 0)  -- at feet
+
+                ringHue = (ringHue + 0.14) % 1
+
+                -- spawn expanding disc in background task
+                local capturedHue = ringHue
+                task.spawn(function()
+                    local ring = Instance.new("Part")
+                    ring.Size        = Vector3.new(0.5, 0.08, 0.5)
+                    ring.Material    = Enum.Material.Neon
+                    ring.CanCollide  = false
+                    ring.Anchored    = true
+                    ring.CastShadow  = false
+                    ring.Transparency = 0.15
+                    ring.Color       = Color3.fromHSV(capturedHue, 0.9, 1)
+                    ring.CFrame      = CFrame.new(spawnPos)
+                    ring.Name        = "ShockwaveRing"
+                    ring.Parent      = ws
+
+                    -- 22 steps = ~0.55s to expand and fade
+                    for step = 1, 22 do
+                        task.wait(0.025)
+                        if not (ring and ring.Parent) then break end
+                        local s = 0.5 + step * 1.1      -- 0.5 → 24.7
+                        ring.Size        = Vector3.new(s, 0.07, s)
+                        ring.Transparency = 0.15 + (step / 22) * 0.85
+                        ring.Color       = Color3.fromHSV((capturedHue + step * 0.02) % 1, 0.9, 1)
+                    end
+                    pcall(function() if ring and ring.Parent then ring:Destroy() end end)
+                end)
+            end)
+        end)
+        BotEnv.TrackConnection("Aura_Rings", ringConn)
+
+        -- ── Spark burst: fire outward bursts when moving ──────────────────────
+        local lastBurstPos = nil
+
+        local burstConn
+        burstConn = BotEnv.RunService.Heartbeat:Connect(function()
+            pcall(function()
+                if not BotEnv.GetFlag("IsAuraActive") then
+                    BotEnv.DisconnectSafe("Aura_Burst")
+                    return
                 end
                 local hrp = BotEnv.GetBotHRP()
                 if not hrp then return end
+                if lastBurstPos and (hrp.Position - lastBurstPos).Magnitude < 3 then return end
+                lastBurstPos = hrp.Position
 
-                if not lastPos or (hrp.Position - lastPos).Magnitude > 1.5 then
-                    lastPos  = hrp.Position
-                    trailHue = (trailHue + 0.035) % 1
-
-                    local spark = Instance.new("Part")
-                    spark.Size        = Vector3.new(0.18, 0.18, 0.18)
-                    spark.Shape       = Enum.PartType.Ball
-                    spark.Material    = Enum.Material.Neon
-                    spark.CanCollide  = false
-                    spark.Anchored    = true
-                    spark.CastShadow  = false
-                    spark.Transparency = 0.20
-                    spark.Color        = Color3.fromHSV(trailHue, 1, 1)
-                    spark.Position     = hrp.Position - Vector3.new(0, 2.5, 0)
-                    spark.Name         = "GojoTrail"
-                    spark.Parent       = ws
-                    trailParts[#trailParts + 1] = spark
-                    BotEnv.AuraParts[#BotEnv.AuraParts + 1] = spark
-
-                    -- fade out over 2.5s
-                    task.delay(2.5, function()
-                        pcall(function()
-                            for step = 1, 12 do
-                                task.wait(0.18)
-                                if spark and spark.Parent then
-                                    spark.Transparency = spark.Transparency + 0.065
-                                end
+                -- fire 5 random sparks
+                for _ = 1, 5 do
+                    task.spawn(function()
+                        local sp = Instance.new("Part")
+                        sp.Size        = Vector3.new(0.14, 0.14, 0.14)
+                        sp.Shape       = Enum.PartType.Ball
+                        sp.Material    = Enum.Material.Neon
+                        sp.CanCollide  = false
+                        sp.Anchored    = false
+                        sp.CastShadow  = false
+                        sp.Transparency = 0.1
+                        sp.Color       = Color3.fromHSV(math.random() * 0.15 + 0.50, 1, 1)
+                        sp.Position    = hrp.Position + Vector3.new(
+                            (math.random() - 0.5) * 2,
+                            math.random() * 2,
+                            (math.random() - 0.5) * 2
+                        )
+                        sp.Name        = "ElecSpark"
+                        sp.Parent      = ws
+                        -- give it a random impulse
+                        sp.AssemblyLinearVelocity = Vector3.new(
+                            (math.random() - 0.5) * 30,
+                            math.random(5, 20),
+                            (math.random() - 0.5) * 30
+                        )
+                        -- fade out
+                        for i = 1, 8 do
+                            task.wait(0.07)
+                            if sp and sp.Parent then
+                                sp.Transparency = sp.Transparency + 0.12
                             end
-                            if spark and spark.Parent then spark:Destroy() end
-                        end)
+                        end
+                        pcall(function() if sp and sp.Parent then sp:Destroy() end end)
                     end)
-
-                    if #trailParts > MAX_TRAIL then
-                        pcall(function()
-                            if trailParts[1] and trailParts[1].Parent then
-                                trailParts[1]:Destroy()
-                            end
-                        end)
-                        table.remove(trailParts, 1)
-                    end
                 end
             end)
         end)
-        BotEnv.TrackConnection("Aura_Trail", trailConn)
+        BotEnv.TrackConnection("Aura_Burst", burstConn)
 
-        BotEnv.Respond("👁️ Six Eyes ON — Infinity / Limitless / Domain active!")
+        BotEnv.Respond("⚡ Electric Storm ON — lightning arcs + shockwave rings!")
     end,
 }
