@@ -14,8 +14,8 @@ return {
     Name = "auratp",
     Category = "aura",
     Permission = 1,
-    Aliases = {"tpaura", "flashtp", "warptp"},
-    Description = "Teleport to a player with aura FX (burst + streak + arrival crown)",
+    Aliases = {},
+    Description = "Teleport to a player with Gojo aura FX (burst + streak + arrival crown)",
     Execute = function(BotEnv, args, executor, restArgs)
         if not args[2] then BotEnv.RespondError("need a target: ?bot auratp <player>"); return end
         local target = BotEnv.GetSmartTarget(args[2], executor)

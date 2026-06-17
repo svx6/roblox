@@ -2,24 +2,25 @@
     Command: auramode
     Category: aura
     Permission: 1
-    Usage: ?bot mode aura  /  ?bot auramode
-    Aliases: modeaura, botaura, auraon, glowmode
-    Description: Toggle full AURA bot mode - rainbow particles, spinning orbit ring,
-                 floating crown orbs, and aura glow trail all active at once.
+    Usage: ?bot auramode
+    Aliases: modeaura, botaura, glowmode, auraall
+    Description: Toggle FULL AURA bot mode — ALL effects simultaneously:
+                 rainbow particles, spinning orbit ring, floating crown orbs,
+                 and aura glow trail all active at once. Gojo Satoru vibes.
 ]]
 
 return {
     Name = "auramode",
     Category = "aura",
     Permission = 1,
-    Aliases = {"modeaura", "botaura", "glowmode", "auraall"},
-    Description = "Toggle full AURA bot mode (rainbow particles + orbit ring + crown orbs + trail)",
+    Aliases = {"modeaura", "botaura", "glowmode", "auraall", "auraon"},
+    Description = "Toggle FULL Gojo aura mode (orbit ring + crown orbs + sparkle trail — all at once)",
     Execute = function(BotEnv, args, executor, restArgs)
-        local isOn = BotEnv.GetFlag("IsAuraMode")
+        local isOn = BotEnv.GetFlag("IsAuraModeOn")
 
         -- ─── OFF ────────────────────────────────────────────────────────────────
         if isOn then
-            BotEnv.SetFlag("IsAuraMode", false)
+            BotEnv.SetFlag("IsAuraModeOn", false)
             BotEnv.DisconnectSafe("AuraMode_Orbit")
             BotEnv.DisconnectSafe("AuraMode_Crown")
             BotEnv.DisconnectSafe("AuraMode_Rain")
@@ -38,7 +39,7 @@ return {
         end
 
         -- ─── ON ─────────────────────────────────────────────────────────────────
-        BotEnv.SetFlag("IsAuraMode", true)
+        BotEnv.SetFlag("IsAuraModeOn", true)
         BotEnv.AuraModeParts = BotEnv.AuraModeParts or {}
 
         local ws   = game:GetService("Workspace")
@@ -82,7 +83,7 @@ return {
         -- ── Orbit + crown loop ───────────────────────────────────────────────
         local orbitConn = BotEnv.RunService.Heartbeat:Connect(function(dt)
             pcall(function()
-                if not BotEnv.GetFlag("IsAuraMode") then
+                if not BotEnv.GetFlag("IsAuraModeOn") then
                     BotEnv.DisconnectSafe("AuraMode_Orbit")
                     return
                 end
@@ -133,7 +134,7 @@ return {
         -- ── Rain/trail loop ──────────────────────────────────────────────────
         local trailConn = BotEnv.RunService.Heartbeat:Connect(function()
             pcall(function()
-                if not BotEnv.GetFlag("IsAuraMode") then
+                if not BotEnv.GetFlag("IsAuraModeOn") then
                     BotEnv.DisconnectSafe("AuraMode_Trail")
                     return
                 end
